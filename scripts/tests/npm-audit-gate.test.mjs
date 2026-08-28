@@ -20,16 +20,75 @@ const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const REPO_ROOT = dirname(SCRIPTS_DIR);
 const GATE = join(SCRIPTS_DIR, "npm-audit-gate.mjs");
 const REAL_FRONTEND = join(REPO_ROOT, "frontend");
-const REAL_ALLOWLIST = join(SCRIPTS_DIR, "accepted-vulnerabilities.json");
 
 const EXIT_OK = 0;
 const EXIT_FINDINGS = 1;
 const EXIT_INFRA = 2;
 
 const ACCEPTED_ID = "GHSA-qwww-vcr4-c8h2";
+let testAcceptedAllowlistPath;
+
+/**
+ * Kabul mekanizmasını sınayan test-only kayıt.
+ *
+ * Production allowlist'i bilinçli olarak boş olabilir; düzeltilmiş bir gerçek
+ * advisory'yi sırf bu regresyon testleri için kabul edilmiş tutmak, bayat risk
+ * kaydını ürün sözleşmesine dönüştürürdü. Bu fixture gate'in kabul ve guard
+ * davranışını gerçek frontend üzerinde aynı fail-closed desenlerle ölçer.
+ */
+function testAcceptedAllowlist() {
+  if (testAcceptedAllowlistPath !== undefined) return testAcceptedAllowlistPath;
+  testAcceptedAllowlistPath = writeTempJson("accepted.json", {
+    npm: [
+      {
+        id: ACCEPTED_ID,
+        severity: "high",
+        guards: {
+          scan_dir: "src",
+          forbidden_dependencies: [
+            "@react-router/dev",
+            "@react-router/node",
+            "@react-router/serve",
+            "@react-router/express",
+            "@react-router/architect",
+            "@react-router/cloudflare",
+            "@react-router/fs-routes",
+            "@react-router/remix-routes-option-adapter",
+            "@vitejs/plugin-rsc",
+          ],
+          forbidden_source_patterns: [
+            "createBrowserRouter",
+            "createHashRouter",
+            "createMemoryRouter",
+            "createStaticRouter",
+            "createStaticHandler",
+            "RouterProvider",
+            "StaticRouterProvider",
+            "[\\\"']react-router/rsc[\\\"']",
+            "[\\\"']react-router-dom/server[\\\"']",
+            "[\\\"']react-dom/server[\\\"']",
+            "[\\\"']react-dom/static[\\\"']",
+            "renderToString",
+            "renderToPipeableStream",
+            "renderToReadableStream",
+            "hydrateRoot",
+            "\\bloader\\s*[:=]",
+            "\\baction\\s*[:=]",
+            "unstable_",
+          ],
+        },
+      },
+    ],
+    pypi: [],
+  });
+  return testAcceptedAllowlistPath;
+}
 
 /** Gate'i verilen stdin ve allowlist ile çalıştırır. */
-function runGate(stdinText, { allowlist = REAL_ALLOWLIST, frontend = REAL_FRONTEND } = {}) {
+function runGate(
+  stdinText,
+  { allowlist = testAcceptedAllowlist(), frontend = REAL_FRONTEND } = {},
+) {
   const result = spawnSync(
     process.execPath,
     [GATE, "--allowlist", allowlist, "--frontend", frontend],
@@ -336,7 +395,16 @@ test("erişilemeyen registry ile gerçek npm audit altyapı hatası verir", () =
   const audit = spawnSync(
     npmCommand,
     ["audit", "--json", "--registry", "http://127.0.0.1:1/"],
-    { cwd: REAL_FRONTEND, encoding: "utf8" },
+    {
+      cwd: REAL_FRONTEND,
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        npm_config_fetch_retries: "0",
+        npm_config_fetch_timeout: "1000",
+      },
+    },
   );
 
   const { code, stderr } = runGate(audit.stdout ?? "");

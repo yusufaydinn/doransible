@@ -7,78 +7,7 @@
     "Yeni kayıt eklemek, açık bir risk kabulüdür ve 'reason' alanı somut olmalıdır."
   ],
 
-  "npm": [
-    {
-      "id": "GHSA-qwww-vcr4-c8h2",
-      "npm_advisory_id": 1124282,
-      "severity": "high",
-      "title": "React Router: RSC Mode CSRF Bypass Allows Action Execution Before 400 Response",
-      "url": "https://github.com/advisories/GHSA-qwww-vcr4-c8h2",
-      "affected_packages": ["react-router", "react-router-dom"],
-      "note": "npm audit iki kayıt raporlar; react-router-dom yalnızca react-router üzerinden transitif olarak etkilenir. Tek kök advisory'dir.",
-      "status": "accepted_not_applicable",
-      "reason": [
-        "Zafiyet React Router'ın RSC (React Server Components) modunu ve server action akışını etkiler.",
-        "Bu proje saf client-side SPA'dır: frontend/src/main.tsx BrowserRouter kullanır, RouterProvider/createBrowserRouter yoktur.",
-        "Kullanılan API yüzeyi yalnızca BrowserRouter, Routes, Route (App.tsx), NavLink (App.tsx) ve Link (NotFoundPage.tsx)'tir.",
-        "Hiçbir route loader veya action tanımlı değildir; SSR/hydrateRoot kullanılmaz.",
-        "package.json içinde @react-router/dev, @react-router/node veya @react-router/serve bulunmaz; vite.config.ts yalnızca @vitejs/plugin-react kullanır.",
-        "Bu nedenle zafiyetli kod yolu uygulamada hiç çalıştırılmaz."
-      ],
-      "why_not_downgraded": [
-        "npm audit fix --force react-router-dom@7.11.0 önerir.",
-        "7.11.0, GHSA-wrjc-x8rr-h8h6 (<Link> ve useNavigate üzerinden open redirect) açığını taşır.",
-        "O zafiyet bu projede gerçekten erişilebilirdir; dolayısıyla downgrade riski artırır.",
-        "7.18.1 hem GHSA-wrjc-x8rr-h8h6 hem GHSA-337j-9hxr-rhxg açıklarını kapatır."
-      ],
-      "accepted_on": "2026-07-28",
-      "review_when": "RSC bulgusu için düzeltilmiş bir react-router sürümü yayımlandığında yükselt ve bu kaydı sil.",
-
-      "revalidate_if": "Aşağıdaki 'guards' koşulları kabulün makine tarafından doğrulanan hâlidir. Herhangi biri ihlal edilirse scripts/npm-audit-gate.mjs exit 1 verir ve kabul düşer.",
-      "guards": {
-        "_comment": [
-          "Bu desenler fail-closed'dur: eşleşme, 'zafiyet var' demek değil,",
-          "'kabulün dayandığı varsayım artık doğrulanamıyor, insan yeniden değerlendirsin' demektir.",
-          "Bilinçli bir kullanım eklenirse kabul kaydı güncellenmeli veya sürüm yükseltilmelidir.",
-          "Modül desenleri bilerek 'from' anahtar sözcüğünü yakalamaz; yalnızca tırnaklı",
-          "modül belirtecini eşleştirir. Böylece tek/çift tırnak, fazladan boşluk, side-effect",
-          "importu (import 'x'), dynamic import (import('x')) ve require('x') aynı desenle yakalanır."
-        ],
-        "scan_dir": "src",
-        "forbidden_dependencies": [
-          "@react-router/dev",
-          "@react-router/node",
-          "@react-router/serve",
-          "@react-router/express",
-          "@react-router/architect",
-          "@react-router/cloudflare",
-          "@react-router/fs-routes",
-          "@react-router/remix-routes-option-adapter",
-          "@vitejs/plugin-rsc"
-        ],
-        "forbidden_source_patterns": [
-          "createBrowserRouter",
-          "createHashRouter",
-          "createMemoryRouter",
-          "createStaticRouter",
-          "createStaticHandler",
-          "RouterProvider",
-          "StaticRouterProvider",
-          "[\"']react-router/rsc[\"']",
-          "[\"']react-router-dom/server[\"']",
-          "[\"']react-dom/server[\"']",
-          "[\"']react-dom/static[\"']",
-          "renderToString",
-          "renderToPipeableStream",
-          "renderToReadableStream",
-          "hydrateRoot",
-          "\\bloader\\s*[:=]",
-          "\\baction\\s*[:=]",
-          "unstable_"
-        ]
-      }
-    }
-  ],
+  "npm": [],
 
   "pypi": []
 }
