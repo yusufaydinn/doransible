@@ -183,8 +183,9 @@ git pull --ff-only
 ```
 
 `backend`, `frontend`, `sample-projects`, `docs` ve `scripts` görünmelidir.
-Size özel release/branch verilmişse `main` yerine onu kullanın. Beklenmeyen yerel
-değişiklik varsa güncelleme öncesi durun.
+Size özel release/tag/commit verilmişse onu kullanın. Aksi durumda GitHub
+repository'sinin varsayılan `main` dalını kullanın. Beklenmeyen yerel değişiklik
+varsa güncelleme öncesi durun.
 
 ---
 

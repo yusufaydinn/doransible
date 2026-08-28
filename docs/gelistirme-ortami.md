@@ -54,10 +54,15 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -e ".[dev]"
+python -m pip install -r requirements.lock.txt
+python -m pip install -e . --no-deps
 cp .env.example .env
 alembic upgrade head
 ```
+
+Kilit dosyası runtime ve doğrulama araçlarının test edilmiş tam sürümlerini
+kurar. Editable kurulum `--no-deps` ile çalıştırıldığı için pip bu sürümleri
+yeniden çözmez.
 
 Kurulum kontrolü:
 
@@ -313,7 +318,7 @@ Her sample project kendi README ve offline test script'ine sahiptir. Örnek:
 
 ```bash
 cd sample-projects/ubuntu-ssh-hardening
-PATH="../../../backend/.venv/bin:$PATH" ./tests/run_offline_tests.sh
+PATH="../../backend/.venv/bin:$PATH" ./tests/run_offline_tests.sh
 ```
 
 Gerçek host testi offline suite'in yerine geçmez; offline test de lockout,
@@ -404,6 +409,6 @@ git grep -nE 'BEGIN (OPENSSH|RSA|EC|DSA) PRIVATE KEY|password\s*[:=]' -- . \
   ':(exclude)*.lock' || true
 ```
 
-Cache, venv, `node_modules`, runtime database, artifact ve secret dosyaları
-Git'e eklenmez. Sunum/rapor çıktıları bilinçli teslim artifact'ıysa tutulur;
-geçici ekran görüntüsü veya yerel VM dosyası repository'ye konmaz.
+Cache, venv, `node_modules`, runtime database, artifact, secret, geçici ekran
+görüntüsü ve yerel VM dosyaları Git'e eklenmez. Teslim repository'sinde yalnız
+ürün kaynakları, testler, örnek project'ler ve güncel işletim belgeleri tutulur.

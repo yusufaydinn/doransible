@@ -60,8 +60,6 @@ yarn-error.log*
 # ---------------------------------------------------------------------------
 .vscode/
 .idea/
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
 *.swp
 .DS_Store
 Thumbs.db

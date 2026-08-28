@@ -44,17 +44,16 @@ README.md
 
 ## 4. Kurulacak sürümü sabitleyin
 
-Size belirli bir release/tag/commit verildiyse onu kullanın. Verilmediyse proje
-sorumlusunun onayladığı ana dalı kullanın:
+Size belirli bir release/tag/commit verildiyse onu kullanın. Aksi durumda
+GitHub repository'sinin varsayılan `main` dalını güncelleyin:
 
 ```bash
 git switch main
 git pull --ff-only
 ```
 
-`main` henüz teslim branch'ini taşımıyorsa rastgele branch seçmeyin; proje
-sorumlusundan kullanılacak branch adını isteyin. Bu repository'nin geliştirme
-branch adları tarihsel çalışma kayıtlarıdır.
+Bu iki komuttan sonra `git status --short --branch` çıktısı `main...origin/main`
+göstermeli ve altında değişiklik satırı bulunmamalıdır.
 
 ## 5. Arşiv (ZIP) ile aldıysanız
 

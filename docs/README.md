@@ -18,8 +18,9 @@ Belgeler okuyucu türüne göre ayrılmıştır.
 | Belge | İçerik |
 |---|---|
 | [Geliştirici Rehberi](GELISTIRICI_REHBERI.md) | Kod yapısı, katmanlar, veri modeli, API, execution akışı, test yaklaşımı ve katkı adımları |
-| [Mimari](../MIMARI.md) | Ayrıntılı bileşenler, invariants ve tarihsel mimari genişlemeler |
+| [Mimari](../MIMARI.md) | Güncel bileşenler, veri modeli, akışlar ve çalışma invariant'ları |
 | [Güvenlik](../GUVENLIK.md) | Path, secret, subprocess, runner, artifact ve hardening güvenlik kararları |
+| [Mimari Karar Dizini](KARAR_DIZINI.md) | Kaynak kodda kullanılan `ADR-xxx` izleme kimliklerinin güncel mimari ve güvenlik karşılıkları |
 
 ## Belge bakım kuralı
 

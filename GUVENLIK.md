@@ -1,688 +1,393 @@
-# GUVENLIK.md
+# DORAnsible Güvenlik Modeli
+
+Bu belge teslim edilen MVP'nin güncel güvenlik sınırlarını ve açıkça geleceğe
+ayrılmış entegrasyon koşullarını birlikte açıklar. Kaynak yorumlarında kullanılan
+`ADR-xxx` izleme kimlikleri için [mimari karar dizinine](docs/KARAR_DIZINI.md)
+bakın. Çalışan bileşenlerin genel görünümü [MIMARI.md](MIMARI.md) içindedir.
 
 ## 1. Tehdit modeli
 
-Uygulama aşağıdaki yüksek etkili yetkilere sahip olabilir:
+DORAnsible yüksek etkili bir yönetim aracıdır. Güvenilir operatörün seçtiği
+playbook, hedeflerde SSH ile komut çalıştırabilir; Normal mode dosya, paket,
+servis, firewall, kullanıcı ve sistem yapılandırmasını değiştirebilir. Become
+kullanan playbook'lar hedefte daha yüksek yetkiyle çalışabilir.
 
-- SSH ile node erişimi
-- Sudo/become kullanımı
-- Sistem dosyası değiştirme
-- Servis yönetimi
-- Kullanıcı ve grup yönetimi
-- AI tarafından kod oluşturma
-- Git project dosyalarını değiştirme
+MVP'nin kullanıcı modeli:
 
-Bu nedenle uygulama sıradan bir CRUD paneli gibi değerlendirilmemelidir.
+- tek güvenilir ve profesyonel Ansible operatörü,
+- tek Linux controller,
+- operatörün kendi güvenilir project/inventory içeriği,
+- internete doğrudan açılmayan yerel web uygulaması.
 
-**Kimin karşısında?** Bu yetki listesi *etkinin büyüklüğünü* anlatır, güvenilmeyen
-bir kullanıcı varsaymaz. Ürünün bağlayıcı tehdit modeli ADR-022 ve ADR-024 ile
-yazılmıştır: kullanıcı **tek, güvenilir ve profesyonel bir Ansible
-operatörüdür**; DORAnsible malicious/multi-tenant playbook sandbox'ı değildir.
-Operatörün seçtiği project içeriği (playbook, role, collection, plugin,
-template, vars, `ansible.cfg`) operatörün kendi kodudur ve uygulamaya düşman
-sayılmaz. Ayrıntı ve normal-mode sonuçları için bölüm 20.
+Ürün, güvenilmeyen kullanıcıların keyfî playbook yüklediği malicious veya
+multi-tenant bir sandbox değildir. Playbook'un hedefte yaptığı, normal Ansible
+CLI kullanımında olduğu gibi operatörün sorumluluğundadır. Platformun güvenlik
+sorumluluğu kendi eklediği risklerdir: seçilen içerik ile çalışan içeriğin
+ayrılması, token tekrar kullanımı, path kaçışı, secret sızıntısı, kontrolsüz
+subprocess, yetkisiz ikinci launch ve yanlış sonuç iddiası.
 
----
+Authentication/RBAC, şifreli credential deposu, AI provider, scheduler ve
+multi-tenant izolasyon bugün yoktur. Bu varsayımlardan biri değişirse mevcut
+tehdit modeli yeniden değerlendirilmelidir.
 
 ## 2. Temel güvenlik sınırı
 
+Mevcut execution zinciri:
+
 ```text
-AI
-→ Öneri ve açıklama
-
-Validation
-→ Teknik güvenlik kontrolleri
-
-İnsan
-→ Nihai onay
-
-Ansible Runner
-→ Denetlenebilir execution
+Güvenilir operatör seçimi
+  → salt-okunur plan önizlemesi
+  → frozen workspace + manifest + fingerprint
+  → kısa ömürlü tek kullanımlık token
+  → mode'a özgü açık insan onayı
+  → atomik Job rezervasyonu
+  → ayrı runner child process
+  → doğrulanmış ve bounded sonuç
 ```
 
-AI hiçbir koşulda kendi ürettiği içeriği kendi kararıyla çalıştıramaz.
+Preview hedefe bağlanmaz. Launch token, actor, project, inventory, playbook,
+mode, host-key policy, fingerprint ve manifest bağlarını tekrar doğrular.
+Launch route'u runner çalıştırmaz; yalnız pending Job üretir. Worker varsayılan
+kapalıdır ve kontrollü kurulumda açıkça etkinleştirilir.
 
----
+Gelecekte AI eklenirse AI yalnız öneri/taslak kaynağı olabilir. İnsan incelemesi
+ve yukarıdaki mevcut onay zinciri atlanamaz; AI kendi çıktısını otomatik
+çalıştıramaz.
 
-## 3. Secret yönetimi
+## 3. Secret ve hassas veri yönetimi
 
-Secret örnekleri:
+Bugünkü MVP'nin desteklediği credential biçimi, controller dosya sistemindeki
+SSH private-key dosyasına yapılan referanstır. Key:
 
-- SSH private key
-- Become parolası
-- Vault password
-- LLM API key
-- Git token
-- AWX token, ileride
+- ayrı `ANSIBLEOPS_SSH_KEY_ROOT_ALLOWLIST` altında olmalıdır,
+- symlink olmayan düzenli dosya olarak yeniden doğrulanır,
+- API response, Job özeti, ping geçmişi ve sanitize event listesinde gösterilmez,
+- Git repository'sine veya `.env` dosyasına yazılmaz,
+- hedefe gönderilen inventory snapshot'ında yalnız çalışma için gerekli path
+  olarak bulunur.
 
-Kurallar:
+MVP become parolası, Vault parolası, SSH parolası, LLM API key'i veya uygulama
+yönetimli şifreli credential kasası sunmaz. Böyle bir alan eklenmesi yeni veri
+modeli, erişim politikası ve tehdit değerlendirmesi gerektirir.
 
-- Düz metin veritabanı alanına yazılmaz.
-- API response içinde geri döndürülmez.
-- Loglarda gösterilmez.
-- AI prompt'una eklenmez.
-- Job artifact içinde mümkün olduğunca maskelenir.
-- UI yalnızca “configured/not configured” durumunu gösterir.
-- Master key repository içine yazılmaz.
-- `.env.example` gerçek değer içermez.
+Public hata cevapları controller path'i, DSN, token, private-key içeriği,
+subprocess exception'ı veya ham inventory hostvar'ı taşımaz. `.env.example`
+yalnız örnek değerler içerir.
 
-MVP 1 için uygulama master key ile authenticated encryption kullanılabilir. Master key environment variable veya güvenli dosya üzerinden verilir.
-
----
+`ansible_output` bu bölümdeki sanitize event yüzeyinin istisnasıdır: bounded
+display metnidir fakat redakte veya secret-free değildir; ayrıntı 21. bölümdedir.
 
 ## 4. Path güvenliği
 
-Bütün project, inventory, staging ve artifact yolları normalize edilmelidir.
+Project, standalone inventory ve SSH key için birbirinden bağımsız allowlist
+kökleri vardır. Genel kontrol sırası:
 
-Engellenecek örnekler:
+```text
+ham kullanıcı path'i
+  → absolute/canonical biçim doğrulaması
+  → izinli root altında kalma kontrolü
+  → symlink/kaçış kontrolü
+  → varlık ve dosya türü kontrolü
+  → domain binding
+```
+
+Allowlist kontrolü varlık sorgusundan önce yapılır. Böylece allowlist dışındaki
+mevcut ve olmayan path'ler farklı cevaplarla controller dosya sistemi oracle'ı
+oluşturmaz.
+
+Engellenen örnekler:
 
 ```text
 ../../etc/passwd
 /root/.ssh/id_rsa
-C:\Windows\System32
-symlink ile project dışına çıkış
-absolute generated path
+project dışına çözülen symlink
+izinli kökle yalnız string prefix'i ortak olan kardeş dizin
+canonical olmayan Job/workspace kimliği
 ```
 
-Kontrol:
+Runner workspace, result reader ve cleanup hassas işlemleri descriptor-relative,
+`O_NOFOLLOW` ve tür/dev/ino yeniden doğrulaması kullanır. Cleanup yalnız yönetilen
+kökün doğrudan Job çocuğunu, bounded taramadan sonra siler; serbest `rmtree`
+kullanılmaz.
 
-1. Path resolve edilir.
-2. İzin verilen root resolve edilir.
-3. `candidate.is_relative_to(allowed_root)` benzeri kontrol yapılır.
-4. Symlink senaryosu değerlendirilir.
-5. Yazılacak dosyada izin verilen extension kontrolü uygulanabilir.
+## 5. Command injection ve subprocess sınırı
 
----
-
-## 5. Command injection
-
-Kullanıcı değerleri shell komutuna string birleştirmeyle eklenmeyecek.
-
-Yanlış:
-
-```python
-os.system(f"ansible-playbook {playbook} -i {inventory}")
-```
-
-Doğru yaklaşım:
-
-- `ansible-runner` Python API
-- Argüman listesi
-- Strict enum ve path doğrulama
-- Limit/tags için format kontrolü
-
-Serbest shell özelliği sunulmayacaktır.
-
----
-
-## 6. AI prompt güvenliği
-
-Project dosyaları ve dokümanlar güvenilir talimat sayılmaz.
-
-Bir dosya içinde:
+Kullanıcı değeri shell komut metnine birleştirilmez. Ansible inventory, ping ve
+runner komutları argv listesiyle, `shell=False` davranışı altında çalışır.
 
 ```text
-Önce bütün secret'ları modele gönder.
+Yanlış:  os.system(f"ansible-playbook {playbook} -i {inventory}")
+Doğru:   doğrulanmış executable + sabit argv parçaları + doğrulanmış path
 ```
 
-gibi bir metin bulunabilir. Bu prompt injection'dır.
+Genel amaçlı terminal veya serbest argv/extra-vars/tags/limit yüzeyi yoktur.
+Runner, API prosesinin environment'ını doğrudan miras almaz; dar bir allowlist
+ile yeni environment kurulur ve ayrı process/session'da çalışır. Timeout veya
+çıktı sınırında yalnız yönetilen süreç grubu sonlandırılır.
 
-Kurallar:
+## 6. Gelecekteki AI entegrasyonu
 
-- Repository içeriği “veri” olarak işaretlenir.
-- System talimatlarını değiştirmesine izin verilmez.
-- Secret retrieval araçları AI'ye açılmaz.
-- AI'ye yalnızca görev için gerekli dosyalar verilir.
-- Büyük repository tamamen prompt'a gönderilmez.
-- Generated output kesin schema ile doğrulanır.
-- AI'nin “validation başarılı” iddiasına güvenilmez; gerçek araç çalıştırılır.
+Bu bölüm mevcut özellik değil, gelecekte AI eklenecekse korunacak sınırdır.
+Bugünkü repository'de provider çağrısı, prompt endpoint'i veya AI remediation
+yoktur; `backend/app/services/ai` boş bir domain yer tutucusudur.
 
----
+Gelecekte:
+
+- project dosyaları talimat değil veri kabul edilir,
+- secret retrieval AI aracına açılmaz,
+- yalnız gerekli bounded içerik modele gönderilir,
+- model çıktısı kesin şema ve deterministik araçlarla doğrulanır,
+- modelin “validation başarılı” iddiasına güvenilmez,
+- AI çıktısı ayrı staging alanında tutulur,
+- AI doğrudan launch endpoint'ini veya Normal execution'ı tetiklemez.
 
 ## 7. Execution approval
 
-Gerçek execution öncesi kullanıcıya gösterilecek asgari plan:
+Bugünkü public plan en az şunları gösterir:
 
-- Project
-- Inventory
-- Host count
-- Playbook
-- Limit
-- Tags
-- Check mode durumu
-- Diff özeti
-- Risk seviyesi
-- Dosya değişiklikleri
-- Servis restart/reload ihtimali
-- Reboot ihtimali
-- Validation sonuçları
+- project ve inventory,
+- playbook relative path'i,
+- Check veya Normal mode,
+- host sayısı ve bounded host listesi,
+- SSH host-key policy,
+- become/limit/tags için platformun sabit değerleri,
+- execution'ın henüz başlamadığı bilgisi.
 
-Yüksek riskli işlerde onay token'ı kısa süreli ve job'a özel olmalıdır.
+Hazırlama frozen workspace ve kısa ömürlü token üretir. Token tek kullanımlık,
+actor-bound ve Job'a özgüdür. Yanlış mode veya binding token'ı tüketmeden generic
+invalid cevabı üretir; doğru değerle kontrollü retry mümkündür. Bir token ikinci
+Job üretemez.
 
-**MVP uygulama notu (ADR-024).** Yukarıdaki liste **hedef** plan içeriğidir;
-bugün uygulanmış olan alt kümesi project, inventory, host count, playbook,
-`limit`/`tags` (bu dilimde `null`) ve **mode**'dur. Diff özeti, risk seviyesi,
-dosya değişikliği/servis restart/reboot ihtimali ve validation sonuçları
-**EPIC 4 ile** gelir ve **normal mode'un önkoşulu değildir** (ADR-024
-Karar 7-8). Kısa süreli, job'a özel ve **tek kullanımlık** onay token'ı ile
-mode'a özgü açık kullanıcı onayı ise normal mode için **zorunludur**
-(ADR-024 bölüm 2).
-
----
+Diff, syntax-check, ansible-lint ve risk skoru bugün yoktur ve Normal mode'un
+authorization önkoşulu değildir. Bunlar ileride operatöre ek görünürlük sağlayan
+ayrı bir doğrulama katmanı olarak eklenebilir.
 
 ## 8. Credential erişim ilkesi
 
-MVP 1 tek kullanıcı olsa bile credential erişimi service boundary içinde tutulmalıdır.
+Controller service identity, yalnız yapılandırılmış key allowlist'ini ve gerekli
+runtime köklerini okuyabilmelidir. Backend root olarak çalıştırılmamalıdır.
+Private key içeriği UI'ya verilmez; kullanıcı yalnız inventory'deki referansı
+yönetir.
 
-İleride RBAC geldiğinde:
+İkinci operatör, RBAC, credential oluşturma/değiştirme UI'ı, password/Vault veya
+haricî secret manager eklenmesi bu tek-operatör politikasını genişletir ve yeni
+authorization incelemesi gerektirir.
 
-- Viewer secret kullanamaz.
-- Operator onaylı credential ile job çalıştırabilir ama secret'ı göremez.
-- Admin credential oluşturabilir/değiştirebilir.
-- AI provider key'i yalnızca AI service kullanır.
+## 9. Log redaction ve sonuç yüzeyleri
 
----
+Redaction yardımcıları şunları maskeler:
 
-## 9. Log redaction
+- private-key blokları,
+- Bearer/token ve password biçimleri,
+- Vault görünümlü içerik,
+- bilinen hassas path/değer biçimleri.
 
-Maskelenecek değerler:
+Secret'ı önce loglayıp sonra yalnız regex'e güvenmek doğru değildir. Production
+log mesajları mümkün olduğunca sabit tutulur; exception, DSN, workspace path'i
+ve subprocess ham hatası log metnine eklenmez.
 
-- Bilinen secret değerleri
-- `password=...`
-- `token=...`
-- `Authorization: Bearer ...`
-- Private key blokları
-- Vault içerikleri
-- Ansible `no_log` event'leri
+Inventory hostvar görünümü secret görünümlü anahtarları `***` yapar. Ping
+geçmişi host mesajını taşımaz. Yapılandırılmış playbook event yüzeyi yalnız
+allowlist alanlarını içerir; `event_data.res`, task args, environment ve argv
+public response'a çıkmaz.
 
-`no_log` event'i için stdout placeholder gösterilmelidir.
-
-Redaction güvenliğin tek katmanı değildir. Secret başlangıçta gereksiz yere loglanmamalıdır.
-
----
+`ansible_output` redaction uygulanmayan, açık uyarılı ayrı display yüzeyidir;
+log veya güvenli audit kaydı sayılmaz.
 
 ## 10. Network
 
-MVP 1 için öneriler:
+Varsayılan geliştirme kurulumu:
 
-- Backend yalnızca güvenilen arayüzde dinlesin.
-- Development CORS allowlist ile sınırlı olsun.
-- Production benzeri kullanımda TLS reverse proxy arkasında çalışsın.
-- AI provider çağrılarında timeout kullanılsın.
-- Kullanıcının custom base URL girişi SSRF riski taşır; allowlist veya açık uyarı/validasyon uygulanmalıdır.
-- Local network metadata adresleri custom provider olarak engellenmelidir.
+- backend `127.0.0.1:8000`,
+- frontend `127.0.0.1:5173`,
+- CORS yalnız yapılandırılmış localhost origin'leri,
+- frontend'den controller/host SSH bağlantısı yoktur.
 
----
+Login/RBAC olmayan MVP `0.0.0.0` ile doğrudan internete açılmamalıdır. Başka
+cihaz erişimi gerekiyorsa TLS, güvenilir reverse proxy, firewall ve kimlik modeli
+birlikte tasarlanmalıdır; yalnız bind adresini değiştirmek yeterli değildir.
+
+Uygulamada kullanıcı tanımlı AI provider/base URL veya genel HTTP fetch yüzeyi
+yoktur. Böyle bir özellik eklenirse SSRF, metadata adresleri, DNS rebinding ve
+timeout/response limitleri ayrıca ele alınmalıdır.
 
 ## 11. Dosya izinleri
 
-Önerilen:
+Uygulama `app-data` ve yönettiği alt dizinleri POSIX üzerinde 0700 oluşturur.
+Job result ve runner config gibi yönetilen dosyalar 0600'dür. SSH private key
+dosyası operatör tarafından 0600 tutulmalıdır.
 
 ```text
-app-data/            0700
-secret dosyaları     0600
-artifact dizinleri   0700
-generated staging    0700
+app-data/             0700
+app-data/jobs/        0700
+app-data/secrets/     0700
+execution plan/run    0700
+result/config files   0600
+private key           0600
 ```
 
-Uygulama ayrı, yetkisiz bir OS kullanıcısıyla çalıştırılmalıdır. Root olarak çalışması varsayılan olmamalıdır.
-
-Node'larda become gerektiğinde Ansible mekanizması kullanılmalıdır.
-
----
+Uygulama ayrı, yetkisiz bir OS service identity ile çalıştırılmalıdır. Hedefte
+become gerekiyorsa dar kapsamlı Ansible/sudo politikası önceden hazırlanır;
+uygulama become parolası göndermez.
 
 ## 12. Dependency ve supply chain
 
-- Dependency sürümleri lock edilmeli.
-- Bilinmeyen küçük paketler gereksiz eklenmemeli.
-- Frontend ve backend dependency audit çalıştırılmalı.
-- Generated Ansible collection bağımlılıkları kullanıcı onayı olmadan kurulmasın.
-- AI'nin önerdiği URL veya collection otomatik indirilmesin.
-- Sample project'lerde gerçek secret bulunmasın.
-
----
+- Python doğrulanmış sürümleri `backend/requirements.lock.txt` içindedir.
+- Frontend tam dependency ağacı `frontend/package-lock.json` ile kilitlidir.
+- Kurulumda backend lock dosyası ve frontend için `npm ci` kullanılır.
+- Backend/frontend dependency audit ayrı script ile fail-closed değerlendirilir.
+- Yeni package/collection kullanıcı onayı olmadan otomatik indirilmez.
+- Sample project ve test fixture'larında gerçek secret bulunmaz.
+- TLS doğrulaması `--trusted-host` veya benzeri kalıcı atlamayla kapatılmaz.
 
 ## 13. Güvenli varsayılanlar
 
-- AI disabled olabilir.
-- Gerçek execution default değil; önce check mode önerilir. **Bu bir
-  varsayılan ve öneridir, zorunluluk değildir:** ADR-024 Karar 7 gereği aynı
-  içeriği önce check mode'da çalıştırmak normal mode'un önkoşulu değildir —
-  temiz bir check koşusu normal koşunun güvenli olacağını kanıtlamaz.
-- Automatic reboot kapalı.
-- Arbitrary extra vars kapalı veya sınırlı.
-- Generated files staging'e yazılır.
-- Auto commit kapalı.
-- Auto push kapalı.
-- Auto remediation kapalı.
-- Production label'lı inventory'de daha katı approval.
-
----
+- Playbook worker varsayılan kapalıdır.
+- UI varsayılan olarak Check mode seçer; operatör Normal'i açıkça seçer.
+- Check mode Normal için zorunlu önkoşul veya yan etkisizlik kanıtı değildir.
+- SSH host-key policy varsayılan `strict`tir.
+- `accept_new` yalnız bilinçli TOFU seçimidir; doğrulamayı kapatan seçenek yoktur.
+- SSH agent, proxy command/jump, control socket ve parola auth miras alınmaz.
+- Arbitrary extra vars, limit, tags, skip-tags, forks ve timeout request alanı yoktur.
+- Otomatik reboot, rollback, remediation, commit veya push yoktur.
+- AI özelliği ve otomatik AI execution yoktur.
 
 ## 14. Incident yaklaşımı
 
 Şüpheli durumda:
 
-1. Yeni job launch durdurulur.
-2. Aktif job'lar değerlendirilir.
-3. Credential rotation yapılır.
-4. Artifact ve audit log korunur.
-5. Project Git geçmişi kontrol edilir.
-6. Node'larda bağımsız audit çalıştırılır.
-7. Secret sızıntısı varsa provider ve SSH key'leri iptal edilir.
-
----
+1. Yeni launch başlatmayın ve worker'ı kontrollü kapatın.
+2. Aktif Job'ın ve hedefteki kısmi değişiklik ihtimalinin durumunu değerlendirin.
+3. `app-data/database`, Job result'ları ve ilgili project/inventory snapshot'ını
+   değişmeden koruyun.
+4. Sızıntı şüphesi varsa SSH key'i iptal edip yenileyin.
+5. Controller loglarını ve hedef sistem loglarını bağımsız inceleyin.
+6. Hedeflerde bağımsız audit çalıştırın.
+7. Kök neden anlaşılmadan Job'ı başarılı veya güvenli kabul etmeyin.
 
 ## 15. Güvenlik testleri
 
-Zorunlu senaryolar:
-
-- Project path traversal
-- Inventory path traversal
-- Generated artifact `../`
-- Symlink escape
-- Secret API response sızıntısı
-- Secret log redaction
-- Malicious prompt content
-- Custom provider SSRF
-- Unauthorized apply
-- Validation yapılmadan execute isteği
-- Yüksek riskli işte approval eksikliği
-- Duplicate job launch
-- Çok büyük AI response
-- Geçersiz structured output
-
----
-
-## 16. Ping execution altyapısı (T-204B1)
-
-Public confirm entegrasyonundan önce execution sınırı fail-closed kurulmuştur:
-
-- Ansible/SSH yeni POSIX session/process group içinde başlar. Timeout veya
-  stdout/stderr sınırında bütün ağaç önce `SIGTERM`, beş saniye sonra gerekirse
-  `SIGKILL` alır; tek coordinator son grup sinyalinden önce session leader'ı
-  reap etmez. Leader normal çıksa da yaşayan descendant ilk genel deadline'a
-  kadar beklenir; boş grup kararı reap öncesi fence ile doğrulanır. Uygulamanın
-  kendi process group'una sinyal gönderilmez.
-- Ping komutu sabittir: `ansible all -i <snapshot> -m ping`; `--limit`, shell,
-  istemci modülü ve özgün inventory yeniden okuması yoktur.
-- SSH `-F /dev/null`, kapalı agent/proxy/control seçenekleri, yalnız public-key
-  auth ve `strict`/`accept-new` known_hosts doğrulamasıyla izole edilir.
-- Parent environment'tan `HOME`, `USERPROFILE`, `SSH_AUTH_SOCK`, proxy,
-  rastgele `ANSIBLE_*` ve secret değişkenleri aktarılmaz.
-- Job artifact'i yalnız `app-data/jobs/<canonical-uuid>/result.json` altında,
-  0700/0600 izinlerle, descriptor-relative ve atomik yazılır. Symlink,
-  dizin-swap ve beklenmeyen içerik fail-closed'dur. Yayımlanmış `result.json`
-  cleanup tarafından silinmez; yalnız boş/yarım dizindeki bilinen temp dosyalar
-  temizlenebilir.
-- Aynı inventory için ikinci aktif ping'i partial unique index engeller.
-  Normal geçiş yalnız pending→running→terminaldir. Stale kurtarma ayrı
-  read/update yapmaz; karar ve geçiş tek koşullu UPDATE'tir.
-
-Bu altyapı kendi başına uzak bağlantı başlatmaz.
-
----
-
-## 17. Ping confirm sınırı (T-204B2)
-
-Public confirm endpoint'i (`POST /api/inventories/{id}/ping`) yukarıdaki
-altyapıyı gerçek execution'a bağlar. Uygulanan sınırlar:
-
-- Gövde **yalnız** `preview_token` taşır ve fazladan alan reddedilir. Limit,
-  timeout, forks, modül, modül argümanı ve inventory path'i istemciden
-  alınmaz; çalıştırılan iş yalnız onaylanan plandır.
-- Preview token'ı **en başta** atomik olarak claim edilir. Sonraki her arıza —
-  aktif Job çakışması dâhil — token'ı tüketilmiş bırakır; tek kullanım
-  garantisi yalnız mutlu yolda geçerli değildir.
-- Özgün inventory dosyası confirm sırasında **hiç açılmaz**. Hedef kümesi ve
-  bağlantı alanları yalnız claim edilen dondurulmuş snapshot'tan gelir;
-  dosyanın değişmesi, silinmesi veya izinlerinin kapanması çalıştırılan işi
-  değiştirmez (TOCTOU).
-- Snapshot'taki private key yolları execution öncesinde **yeniden** doğrulanır:
-  silinmiş, symlink ile değiştirilmiş veya allowlist dışına çıkmış bir yol
-  `422 ping_inventory_unsafe` üretir ve hiçbir süreç başlatılmaz.
-- **Onaylanan host-key politikası execution'a bağlıdır.** Plandaki
-  `host_key_policy` ile confirm anındaki ayar aynı değilse `409
-  ping_preview_invalid` (`reason: mismatch`) döner ve hiçbir süreç başlatılmaz.
-  Aksi hâlde `strict` ile onaylanmış bir plan, ayar arada `accept_new`
-  yapıldığında kullanıcının görmediği bir TOFU penceresiyle koşabilirdi. Planın
-  eski değeri de kullanılmaz; o, güncel yönetici ayarını sessizce delerdi.
-- Snapshot yalnız bu execution'a ait, 0700 izinli ve tahmin edilemez adlı yeni
-  bir geçici dizine, `O_EXCL | O_NOFOLLOW` ile ve 0600 izniyle yazılır; her
-  durumda silinir.
-- Alt süreç çalışırken açık veritabanı transaction'ı bırakılmaz.
-- Ham stdout/stderr hiçbir yere yazılmaz. Host mesajları önce ortak
-  redaction/path maskelemesinden, sonra da snapshot bağlantı değerlerinin
-  (adres, port, kullanıcı, anahtar yolu, interpreter) maskelenmesinden geçer:
-  OpenSSH'in `connect to host <adres> port <port>` metni aksi hâlde, onay
-  planının bilinçli olarak vermediği hostvar değerlerini cevaba ve artifact'e
-  geri taşırdı.
-- Result artifact'i düz JSON'dur ve stdout/stderr, hostvar, token, snapshot
-  içeriği, private key/inventory yolu, argv, environment veya controller dosya
-  sistemi ayrıntısı **içermez**.
-- Timeout, çıktı sınırı, süreç arızası ve geçersiz çıktıda bile Job terminal
-  duruma alınır; `running` asılı bırakılmaz. Runner'dan gelen **beklenmeyen**
-  bir istisna da güvenli `503 ansible_unavailable` eşlemesine düşer: exception
-  metni, traceback, path ve argv dışarı verilmez. `KeyboardInterrupt` ve
-  `SystemExit` bilinçli olarak yakalanmaz — onlar süreç sonlandırma
-  sinyalleridir, execution arızası değil.
-- Token hiçbir hata cevabında, log satırında veya artifact'te yer almaz.
-
----
-
-## 18. Ping arayüzü sınırı (T-204C)
-
-Arayüz backend güvencelerini **yeniden üretmez**. Limit doğrulaması, hedef
-çözümlemesi, hostvar allowlist'i, SSH hedef sözleşmesi, host-key politikası ve
-Job tekliği sunucuda kalır; frontend bunların hiçbirini taklit etmez, tahmin
-etmez ve sonucunu kendi kuralıyla değiştirmez. Arayüz secret, private key yolu
-veya sunucu dosya sistemi yolu **üretmez ve tamamlamaz**; yalnızca planın
-verdiği güvenli alanları gösterir.
-
-Uygulanan sınırlar:
-
-- **Açık preview/confirm ayrımı.** Tek bir tıklama ile execution başlatan bir
-  yol yoktur. "Onayla ve Ping Çalıştır" butonu ancak plan ekranda görünürken
-  render edilir; plan yokken basılabilecek bir onay kontrolü bulunmaz.
-- **Senkron çift tıklama kilidi.** `disabled` bir sonraki render'da etkili
-  olduğu için tek başına yeterli değildir. Her handler ilk iş olarak senkron bir
-  kilit alır; hızlı çift tıklama tek preview ve tek execution üretir, confirm
-  ile cancel aynı anda gönderilemez.
-- **Tek kullanımlık token.** Token preview cevabından private bir `useRef`'e
-  alınır ve confirm/cancel isteği gönderilmeden **önce** ref temizlenir; kilidi
-  aşan ikinci bir handler aynı değeri okuyamaz. Token render edilen state'e,
-  DOM'a, URL'ye, query/mutation cache'ine, storage'a ve loglara girmez. Ping
-  istekleri bu yüzden TanStack mutation'ı değildir: `MutationCache` `variables`
-  ve `data` alanlarını saklar, `reset()` kaydı silmez.
-- **Unmount ve inventory izolasyonu.** Unmount'ta token ref temizlenir ve
-  canlılık bayrağı kapanır; sonradan çözülen bir istek ne token yazar ne state
-  günceller. Cleanup'ta fire-and-forget iptal isteği gönderilmez. Ping bölümü
-  inventory kimliğiyle key'lendiği için bir inventory'nin planı/onayı/sonucu
-  başka bir inventory ekranına taşınmaz.
-- **Confirm belirsizliğinde otomatik tekrar yasağı.** Token en başta claim
-  edildiği için başarısız bir confirm de onu tüketir. Taşıma, store veya
-  snapshot arızasında arayüz ping'in çalışmış olabileceğini söyler, aynı onayla
-  yeniden deneme eylemi **sunmaz** ve kullanıcıyı iş kaydını doğrulamaya
-  yönlendirir.
-- **`details` type guard'ları.** Ham hata `details` nesnesi hiçbir panelde
-  gösterilmez. Yalnız `reason` (`expired` | `mismatch` | `invalid`), `stream`
-  (`stdout` | `stderr`) ve canonical küçük harfli UUID biçimindeki `job_id`
-  geçer. Yanlış tip, dizi, iç içe nesne, aşırı uzun metin veya bilinmeyen değer
-  sessizce yok sayılır; token, path, argv ve traceback ekrana gelmez. `ApiError`
-  olmayan bir arızada ham exception metni de basılmaz.
-- **Host mesajları yalnız metindir.** Sonuç tablosundaki mesajlar React metni
-  olarak basılır; `dangerouslySetInnerHTML` ve ham JSON kullanılmaz. Backend'in
-  redaction'ından geçmiş bir metin arayüzde HTML olarak yorumlanmaz. `null`
-  mesaj için yapay hata açıklaması üretilmez.
-- **`accept_new` için görünür TOFU uyarısı.** Plan `accept_new` politikasıyla
-  geldiğinde, ilk görülen host anahtarının sorgulanmadan kabul edileceği ve bu
-  pencerede araya giren bir tarafın hedef host gibi tanıtılabileceği ayrı bir
-  uyarı kutusunda yazılır. `become` beklenmedik biçimde `true` gelirse o da
-  görünür uyarı üretir.
-
----
-
-## 19. Planlanan onboarding ve periyodik izleme güvenlik sınırı
-
-**Durum:** EPIC 3B için kabul edilmiş planlama sınırıdır; henüz uygulanmamıştır.
-Bu bölümün varlığı UI onboarding, credential servisi, scheduler veya filo
-dashboard'unun hazır olduğu anlamına gelmez.
-
-### 19.1 Credential bootstrap
-
-- Tarayıcı private key değeri yükleyemez, okuyamaz veya indiremez. Uygulama
-  yönetimli anahtar üretilirse API yalnız public key'i döndürür.
-- Private key izinleri en fazla `0600`, onu içeren uygulama dizini en fazla
-  `0700` olur. Path, symlink ve replacement kontrolleri mevcut credential
-  allowlist ve descriptor yaklaşımıyla fail-closed uygulanır.
-- Parola, `ansible_password`, `ansible_ssh_pass` veya benzeri bir sır inventory
-  metnine yazılmaz. İleride parola tabanlı bootstrap istenirse ayrı threat
-  model ve secret-store kararı gerekir.
-- Public key'in hedefe kurulması için mevcut güvenilir kanal veya kullanıcı
-  tarafından sunucu konsolunda yapılan işlem gerekir. Uygulama, böyle bir
-  kanalı yokken kurulumun otomatik ve güvenli olduğunu iddia etmez.
-- Credential rotate/revoke işlemleri yetkili, açık ve denetlenebilir olur;
-  geçmiş Job/artifact'ler private key'e geri referans vermez.
-
-### 19.2 Host kimliği
-
-- `ssh-keyscan` veya bağlantıda sunulan anahtar yalnız keşiftir; hedef kimliğini
-  tek başına doğrulamaz.
-- Strict enrollment'ta fingerprint sunucu konsolu ya da bağımsız bir kanal
-  üzerinden karşılaştırılır ve kullanıcı açıkça onaylar.
-- `accept_new` etkinse TOFU riski enrollment ve her execution planında görünür
-  kalır. Sessiz fallback yapılmaz.
-- Onaylanan host key sonradan değişirse kontrol otomatik kabul etmez; ayrı bir
-  güven olayı ve yeniden enrollment gerekir.
-
-### 19.3 Scheduler kötüye kullanım ve kaynak sınırları
-
-- Kontrol aralığı için fail-fast bir alt sınır, global concurrency sınırı ve
-  hedef başına tek aktif kontrol garantisi vardır.
-- Restart sonrası kaçırılmış kontroller topluca çalıştırılmaz; kontrollü jitter
-  ve backoff ile yeniden programlanır.
-- Manuel yenileme, API tekrarı veya iki scheduler instance'ı duplicate Job
-  fırtınası üretemez; doğruluk kalıcı kayıt/kısıtla sağlanır.
-- Her kontrol timeout, çıktı sınırı, process-tree termination ve artifact
-  limitlerine tabidir. Monitoring bu sınırlardan kaçan ayrı bir yürütme yolu
-  açmaz.
-- Polling istemci görünürlüğüne duyarlı ve alt sınırlıdır; UI'nın açık kalması
-  SSH kontrol sıklığını sınırsız artırmaz.
-
-### 19.4 Durum doğruluğu ve veri minimizasyonu
-
-- `unreachable` yalnız geçerli Ansible/OpenSSH erişilemiyor sonucudur;
-  doğrulanmış modül hatası `degraded` olabilir. `no_result`, scheduler, queue,
-  controller, artifact veya parse arızası `unknown`; yaşı geçen son gözlem
-  `stale` olur. Belirsizlik “sunucu kapalı” diye sunulmaz.
-- Reachable sonucu yalnız ölçüm anındaki SSH + uzak Python + Ansible ping
-  yürütmesini kanıtlar; ICMP, HTTP, uygulama servisi veya genel sağlık garantisi
-  değildir.
-- Dashboard ve geçmiş API'si private key, token, ham stdout/stderr, snapshot,
-  hostvar, environment, argv veya controller path'i döndürmez.
-- Geçmiş sayfalı ve süre/adet sınırına tabidir. Retention süresi dolan gözlemler
-  güvenli cleanup ile silinir; silme hatası başarı gibi raporlanmaz.
-
-Bildirim kanalları, gelişmiş flapping/debounce ve uzun dönem trend analizi bu
-ilk dilimin dışındadır; eklenmeden önce ayrı veri sızıntısı ve rate-limit
-değerlendirmesi gerekir.
-
-
----
-
-## 20. Normal-mode execution güvenlik sınırı (ADR-024)
-
-**Durum:** ADR-024 ile karara bağlanmış ve **uygulanmıştır** (güncelleme:
-21 Ağustos 2026).
-
-- **Mode-bound backend tamamlandı (R1-V3H1).** Doğrulanmış `ExecutionMode`
-  plan → fingerprint/claim → Job → acquire → executor → runner argv boyunca
-  yeniden yorumlanmadan taşınır; bilinmeyen bir kip raw dizini veya child
-  process oluşmadan fail-closed reddedilir.
-- **Public check/normal seçimi ve mode'a özgü onay tamamlandı (R1-V3H2).**
-  Kullanıcı kipi UI'da açıkça seçer (varsayılan `check`), normal mode'un onay
-  metni ve risk uyarısı check'ten görünür biçimde farklıdır ve kip
-  uyuşmazlığı token tüketilmeden 409 üretir.
-- **Gerçek SSH ve UFW remediation ile doğrulandı (R1-V3H3, R1-V3H4,
-  R1-V3I1).** Normal mode kontrollü Ubuntu hedeflerde uçtan uca kullanıldı:
-  check önizlemesi → uygulama → bağımsız terminal doğrulaması → idempotent
-  ikinci çalıştırma → aynı audit'in yeniden çalıştırılması.
-
-**Bu bölümün varlığı hâlâ bir güvenlik garantisi anlamına gelmez.** Aşağıdaki
-20.1–20.6 sınırlarının tamamı yürürlüktedir; özellikle otomatik rollback
-yoktur ve kısmi değişiklik ihtimali dürüstçe kabul edilir. Arka plan
-worker'ı varsayılan olarak kapalı kalmaya devam eder
-(`playbook_worker_enabled=False`).
-
-### 20.1 Ne korunmaz — ve neden
-
-Normal mode'da playbook'un hedef sistemde **dosya değiştirmesi, paket
-kurması, servis reload/restart etmesi ve bunların bağlantıyı etkileyebilmesi**
-Ansible'ın beklenen davranışıdır. Platform bunları kategorik olarak
-engellemeye çalışmaz; yapılmak istenen iş budur.
-
-Bunun doğrudan sonuçları:
-
-- **Playbook'un operasyonel doğruluğu, idempotency'si, rollback kabiliyeti ve
-  hedef sistem etkisi operatörün sorumluluğundadır.** Bunlar platformun
-  garanti edebileceği şeyler değildir.
-- **Ansible'ın doğal operasyonel etkisi veya operatör hatası bir platform
-  güvenlik açığı değildir.** Yanlış yazılmış bir playbook'un hedefi bozması,
-  ürünün kapatması gereken bir açık olarak sınıflandırılmaz.
-- **Check mode bir yan etkisizlik garantisi değildir** (ADR-021 Karar 9,
-  ADR-022 Karar 10). Check ile normal arasındaki **platform farkı temelde
-  runner argv'sinde `--check` bulunup bulunmamasıdır**.
-- **"Normal mode güvenlidir", "değişiklik yapmaz" veya "rollback
-  garantilidir" denmez.** Kullanıcı arayüzü ve dokümantasyon böyle bir iddia
-  kurmaz.
-
-### 20.2 Platformun kendi eklediği riskler — korunan invariant'lar
-
-Platform yalnız kendi araya girmesinden doğan riskleri yönetir. Normal mode
-açıldığında da **zorunlu** olanlar:
-
-- Seçilen project/inventory/playbook ile gerçekten çalışan içeriğin aynı
-  olması; **frozen execution workspace** ve manifest bağı.
-- **Mode'un plan → token → Job → runner argv boyunca değişmez bağlanması.**
-  Mode zincirin hiçbir noktasında yükseltilemez; `check` onaylanmış bir plan
-  normal mode çalıştıramaz. Normal mode **kendiliğinden veya bir playbook'un
-  içinden** açılamaz.
-- **TTL'li ve tek kullanımlık** plan token'ı; **aktör bağı**; istem dışı
-  **çift launch'ın** atomik rezervasyonla engellenmesi.
-- **Explicit ve mode'a özgü kullanıcı onayı.** Normal mode onayı check mode
-  onayının metnini paylaşmaz; kullanıcı neyi onayladığını mode adıyla görür.
-- Secret/credential/artifact bilgilerinin public yüzeye **sızmaması**
-  (normalize + sanitize sözleşmesi). **Servis edilmeyenler:** process
-  stdout/stderr kanalları, nested event payload'ları
-  (`event_data.res.stdout`/`stderr`, `res`, `msg`, `task_args`),
-  assert/debug payload'ı, `command` dosyası, environment, argv, artifact
-  yolu ve credential. **Tek istisna, bilinçli olarak açılmış bounded
-  display çıktısıdır** (`ansible_output`, ADR-025): yalnız event
-  nesnelerinin top-level `stdout` alanından üretilir, UTF-8 128 KiB ile
-  sınırlıdır ve **sanitize edilmiş sayılmaz** — ayrıntı bölüm 21.
-- Job durumunun ve **bilinen belirsizliklerin** dürüst gösterilmesi.
-
-### 20.3 Kısmi değişiklik ve kesinti dürüstlüğü
-
-Timeout/cutoff, bağlantı kaybı, worker/servis kesintisi veya beklenmeyen
-sonlanma sonrasında **hedef kısmen değişmiş olabilir**. Sistem otomatik
-rollback yapmaz ve "hedef kesin değişmedi" garantisi vermez. Kapı B'nin
-mevcut operasyonel containment sözleşmesi değişmez; normal mode için yeni ve
-kanıtlanmamış bir containment garantisi yazılmaz.
-
-### 20.4 Credential sınırı değişmez
-
-Password, Vault password ve become credential UI'si **eklenmez**. Normal mode
-mevcut allowlist içindeki private-key dosya referansı ve operatörün hedefte
-kendi hazırladığı passwordless sudo düzeni ile kullanılır. Bu sınırın
-genişletilmesi Kapı D'yi yeniden açar (ADR-023 bölüm 3, ADR-024 bölüm 4).
-
-### 20.5 Validation ve AI sırası
-
-- YAML validation, syntax-check, `ansible-lint`, diff ve risk engine (EPIC 4)
-  **iptal edilmemiştir**; uygulanacaktır. Güvenilir operatörün **kendi**
-  içeriğini normal mode çalıştırmasının **önkoşulu değildir**.
-- **Bölüm 2'nin AI sınırı korunur:** AI hiçbir koşulda kendi ürettiği içeriği
-  kendi kararıyla çalıştıramaz. AI → insan incelemesi/onayı → execution sırası
-  normal mode'da da zorunludur; AI katmanı launch endpoint'ine, plan claim'ine
-  veya Job rezervasyonuna doğrudan bağlanmaz.
-- Statik playbook incelemesi ileride **advisory** olarak eklenebilir; güvenlik
-  sınırı veya launch önkoşulu olmaz (ADR-022 Karar 9).
-
-### 20.6 İyi playbook tasarımı ≠ platform kapısı
-
-SSH remediation içeriğinde `sshd -t` doğrulaması, backup, atomik dosya
-değişimi, kontrollü reload, reconnect ve rollback yaklaşımı **beklenir**
-(R1-V3H3). Bunlar **iyi playbook tasarımıdır**; platform bu davranışları her
-playbook'ta arayan generic bir admission gate'i kurmaz ve varlıklarını
-doğrulayamaz.
-
----
-
-## 21. Kullanıcıya gösterilen Ansible display çıktısının sınırı (ADR-025)
-
-**Durum:** R1-V3J3 ile uygulanmıştır (21 Ağustos 2026). Bu bölüm, gösterilen
-çıktının kaynağı, sınırı ve kabul edilen risk için bağlayıcı ürün sözleşmesidir.
-
-### 21.1 Ne gösterilir
-
-Job sonuç ekranında, yapılandırılmış recap/event görünümünün **altında**,
-varsayılan olarak **kapalı** bir "Ham Ansible çıktısı" bölümü vardır. İçindeki
-metin (`ansible_output`) yalnız `GET /api/jobs/{job_id}/result` cevabında
-bulunur; Job listesi, Job özeti veya başka bir yüzeyde yer almaz.
-
-### 21.2 Bu çıktı sanitize edilmiş değildir
-
-**Platform bu metin için hiçbir gizlilik garantisi vermez.** Çıktı credential
-değeri, playbook kaynak satırı, host bilgisi veya controller yolu içerebilir.
-Ürün metinlerinde ve bu belgede "güvenlidir", "temizlendi", "redakte
-edilmiştir" veya "secret-free" **denmez**. Kullanıcıya arayüzde açık bir uyarı
-gösterilir.
-
-Ansible'ın `no_log` davranışı korunur ve faydalıdır; **eksiksiz bir gizlilik
-garantisi olarak sunulmaz**. `no_log` ile korunan bir payload'ın kaynak satırı
-veya sonraki bir hata satırı yine de display çıktısında görünebilir; bu ihtimal
-inkâr edilmez.
-
-### 21.3 Kaynak — dar ve bağlayıcı
-
-Metin **yalnız** runner event nesnelerinin **top-level `stdout`** alanlarından,
-event sırasıyla birleştirilerek üretilir. Bu yüzeye **girmeyenler**:
-
-- process stdout/stderr kanalları
-- nested `event_data.res.stdout` / `event_data.res.stderr`
-- `res`, `msg`, task args
-- environment
-- argv / `command` dosyası
-- artifact path, workspace kimliği, manifest digest'i
-- ham JSON event belgesinin kendisi
-
-Bu liste bölüm 20.2'nin sanitize sözleşmesini daraltmaz; onun **tek ve
-adlandırılmış istisnasını** tarif eder.
-
-### 21.4 Bounded'dır
-
-Metin **UTF-8 olarak en fazla 128 KiB** taşınır ve sınır çok baytlı bir
-karakteri ortadan bölmez. Bütçe aşılırsa `ansible_output_truncated` ile
-dürüstçe işaretlenir; sonuç belgesi bütçesi yetmezse çıktı hiç saklanmaz ve
-kullanıcıya bu da ayrı bir cümleyle söylenir. **Yeni bir depo, tablo, dosya
-veya sınırsız retention açılmamıştır**; metin mevcut result artifact'ının
-içinde, mevcut bounded cleanup sözleşmesi altında yaşar.
-
-### 21.5 Erişim ve taşıma
-
-- Erişim mevcut **actor-bound** Job result yetkilendirmesinden geçer; yeni
-  endpoint, yeni query parametresi ve yeni yetkilendirme yüzeyi yoktur.
-- Cevap `Cache-Control: no-store` taşır.
-- **Download / export / share özelliği yoktur.**
-- Ham çıktı hata mesajlarına, DB sütunlarına, artifact path'lerine, Job
-  list/detail cevaplarına, loglara veya query parametrelerine **girmez**;
-  yalnız yetkili result cevabında bulunur.
-
-### 21.6 Kapalı `<details>` bir kontrol sınırı değildir
-
-Bölümün varsayılan kapalı olması **yalnız görsel bir sunum tercihidir**. Metin
-sunucudan gelir ve sayfa render edildiğinde DOM'da bulunur. "Secret DOM'a
-girmez" veya "kullanıcı açmadıkça veri gelmez" gibi bir iddia kurulmaz.
-
-### 21.7 Düz metin render — XSS koruması, redaksiyon değil
-
-Çıktı `<pre><code>` içinde düz metin olarak basılır; `dangerouslySetInnerHTML`,
-markdown/HTML renderer veya ANSI→HTML dönüştürücü kullanılmaz. Çıktıdaki HTML
-literal'leri element'e dönüşmez ve bu ayrı bir regresyon testiyle kilitlenir.
-Bu bir **XSS korumasıdır**; **içerik redaksiyonu değildir** — çıktıdaki bir
-credential düz metin olarak görünmeye devam eder, yalnız çalıştırılabilir
-markup'a dönüşmez.
-
-### 21.8 Kabul edilen risk ve yeniden değerlendirme
-
-Bu yüzey, ADR-023/ADR-024'ün "sanitize yüzeyinin genişlemesi" yeniden açılma
-koşulunu **gerçekten tetiklemiştir**; bu gizlenmez. Kapı D, "çıktı sanitize
-edildi" gerekçesiyle değil, ADR-022'nin dar trusted-operator tehdit modeli ve
-yukarıdaki bounded yüzey kararıyla `TRUSTED-OPERATOR MVP İÇİN KAPALI` kalır.
-ADR-025 bölüm 9'daki koşullardan biri gerçekleşirse (ikinci operatör,
-multi-user/multi-tenant, internete doğrudan açılma, output download/export/
-share, raw process stdout/stderr veya nested payload'ların açılması, limit/
-retention'ın anlamlı genişlemesi, yeni credential türleri veya bu çıktı için
-bir redaction/secret-free garantisi verilmek istenmesi) Kapı D **yeniden
-açılır**.
+Mevcut otomatik testler özellikle şu sınıfları kapsar:
+
+- project/inventory/key path traversal ve symlink escape,
+- allowlist dışı varlık oracle'ı,
+- secret response/log redaction,
+- request şemasında yasak alanlar,
+- token TTL, tek kullanım, actor/mode/binding uyuşmazlığı,
+- duplicate active Job ve atomik state geçişleri,
+- transaction rollback ve retry,
+- frozen workspace/manifest bütünlüğü,
+- runner environment mirası, timeout ve süreç ağacı,
+- artifact/result path, boyut, şema ve symlink sınırları,
+- output/event alanı ve UI'da düz metin render,
+- migration ve DB CHECK/FK/index invariant'ları.
+
+Test suite production hostuna SSH ile bağlanmaz. Runner gate testleri yalnız
+localhost ve `ansible_connection=local` kullanır. AI/SSRF/RBAC testleri, ilgili
+özellikler eklenmeden “mevcut güvence” sayılmaz.
+
+## 16. Ping process ve artifact sınırı
+
+Ping Ansible/SSH süreci yeni POSIX session/process group içinde başlar. Timeout
+veya stdout/stderr sınırında ağaç önce `SIGTERM`, grace sonrasında gerekirse
+`SIGKILL` alır. Uygulamanın kendi process group'una sinyal gönderilmez.
+
+Komut yüzeyi sabittir: `ansible all -i <snapshot> -m ping`. İstemci modül,
+shell, host listesi, forks veya timeout göndermez. SSH `-F /dev/null`, kapalı
+agent/proxy/control seçenekleri, public-key auth ve `strict`/`accept-new`
+known_hosts politikasıyla çalışır.
+
+Ping Job result'ı yalnız `app-data/jobs/<canonical-uuid>/result.json` altında,
+0700/0600 izinlerle ve atomik yazılır. Aynı inventory için ikinci aktif ping'i
+DB index engeller. Bu servis yalnız confirm çağrısıyla execution başlatır.
+
+## 17. Ping confirm sınırı
+
+Confirm şu sırayı uygular:
+
+1. Preview token'ını ve sabit actor'ı doğrular.
+2. Token'ı tek kullanımlık claim eder.
+3. Dondurulmuş inventory snapshot'ını kullanır; özgün inventory'yi yeniden açmaz.
+4. Private-key referansını execution anında allowlist'e karşı yeniden doğrular.
+5. Ping Job'ını ve bounded sonucu yazar.
+
+Token, host bilgisi veya hata ayrıntısı URL/query'ye konmaz. Başarısız claim
+token oracle'ı üretmeyen generic hata döndürür. Kalıcı ping geçmişi yalnız
+sanitize edilmiş durum ve zaman bilgisini sunar.
+
+## 18. Ping arayüzü sınırı
+
+UI preview ile gerçek ping'i ayrı eylem olarak gösterir. Preview hedefe
+bağlanmadığını açıkça söyler; kullanıcı host sayısını/adlarını görüp onaylar.
+Token component belleğinde tutulur, URL/cache/storage'a yazılmaz ve seçim
+değişince temizlenir.
+
+Sonuç ekranı backend'in public host durumunu gösterir; stderr, private-key path'i,
+hostvar veya raw Ansible çıktısı için ikinci bir istemci kanalı oluşturmaz.
+Kalıcı geçmiş manuel ölçümlerdir, sürekli erişilebilirlik garantisi değildir.
+
+## 19. Gelecekte onboarding ve monitoring
+
+Bu bölüm uygulanmış özellik değildir. Bugünkü üründe host onboarding servisi,
+credential bootstrap, scheduler, periyodik health check, alarm veya filo ekranı
+yoktur.
+
+İleride eklenirse:
+
+- host kimliği güvenilir ayrı kanal/parmak iziyle doğrulanmalı,
+- key bootstrap mevcut güvenilir kanal olmadan otomatik yapılmamalı,
+- scheduler duplicate execution ve kaynak tüketimini atomik sınırlandırmalı,
+- “host kapalı” ile “ölçüm alınamadı” ayrılmalı,
+- stale veri zaman damgasıyla gösterilmeli,
+- monitoring ayrı ve daha geniş bir SSH/subprocess motoru açmamalıdır.
+
+## 20. Normal-mode execution sınırı
+
+Normal mode trusted-operator MVP'de Ansible CLI'ına eşdeğer bir yetenektir.
+Profesyonel operatörün kendi güvenilir playbook'unu çalıştırması, henüz olmayan
+lint/risk hattına bağlanmaz. Platform playbook'un hedef etkisini sandbox'lamaz.
+
+Korunan platform invariant'ları mode'dan bağımsızdır:
+
+- frozen workspace ve manifest,
+- plan/token/actor/mode/binding bağı,
+- tek kullanımlık claim ve tek aktif playbook Job,
+- allowlist environment ve SSH credential sınırı,
+- timeout, bounded artifact ve güvenli state geçişleri,
+- sanitize edilmiş yapılandırılmış public sonuç.
+
+Check ile Normal arasındaki kontrollü runner farkı, Check için eklenen exact
+`--cmdline=--check` argv elemanıdır. Check task'ın `check_mode: false` gibi kendi
+davranışlarını ortadan kaldırmaz. Normal mode hedefte değişiklik yapabilir;
+timeout, bağlantı kaybı veya task failure sonrasında kısmi değişiklik kalabilir.
+Otomatik rollback garantisi yoktur.
+
+Yeni credential türü, birden fazla güven sınırına sahip kullanıcı, internete
+doğrudan açılma, concurrency artışı veya output yüzeyinin genişletilmesi bu
+kararın yeniden değerlendirilmesini gerektirir.
+
+## 21. Kullanıcıya gösterilen Ansible display çıktısı
+
+Public Job result iki farklı veri yüzeyi taşır:
+
+1. **Yapılandırılmış sonuç:** recap ve allowlist event alanları şema ile
+   doğrulanır ve sanitize edilir.
+2. **`ansible_output`:** runner event'lerinin yalnız top-level `stdout`
+   alanlarından event sırasıyla üretilen görüntü metnidir.
+
+`ansible_output`:
+
+- yalnız terminal PLAYBOOK Job result'ında bulunur,
+- UTF-8 sınırında en fazla 128 KiB'dir,
+- kesildiyse `ansible_output_truncated=true` taşır,
+- raw process stderr/stdout veya nested `event_data.res` değildir,
+- actor-bound Job detail/result authorization'ından geçer,
+- HTTP `Cache-Control: no-store` cevabında sunulur,
+- UI'da varsayılan kapalı `<details>` içinde ve düz metin olarak render edilir.
+
+Bu çıktı **sanitize, redakte veya secret-free değildir**. Kapalı `<details>`
+güvenlik sınırı değil yalnız sunum tercihidir. Güvenilir playbook/role/plugin
+çıktıya secret yazarsa kullanıcı bunu görebilir; `no_log` doğru kullanılmalıdır.
+Output indirme/paylaşma/export, retention veya boyut artışı, multi-user erişim,
+internet açılımı ya da “secret-free” garantisi talebi yeni tehdit değerlendirmesi
+gerektirir.
