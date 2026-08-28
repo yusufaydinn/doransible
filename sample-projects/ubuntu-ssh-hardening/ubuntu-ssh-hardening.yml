@@ -1,0 +1,50 @@
+---
+# ubuntu-ssh-hardening.yml
+#
+# SSH hardening remediation playbook'u. Yalnızca DORAnsible'a ait TEK bir
+# sshd_config.d drop-in dosyasını yönetir; ana sshd_config veya başka bir
+# drop-in dosyasını değiştirmez. Güvenli uygulama sırası, otomatik SSH/sudo
+# önkoşulu, check/normal mode farkı, lockout riski ve sınırlar için
+# README.md dosyasına bakın.
+#
+# serial: 1 -> host'lar sırayla (birer birer) işlenir. Bu, bir host'taki
+# SSH reload/lockout riskini diğer host'lardan İZOLE eder: bir host'ta
+# `sshd -t` başarısız olup rollback tetiklense veya beklenmedik biçimde
+# bağlantı kesilse bile, henüz sırası gelmemiş diğer host'lar bundan
+# ETKİLENMEDEN, bir sonraki host'a geçilmeden önce play durur/devam eder
+# (Ansible'ın normal host-failure davranışı; otomatik rollback DEĞİLDİR).
+#
+# R1-V3H4-SIMPLIFY-AUDIT-FIX1 -- non-interactive sudo sözleşmesi AÇIKÇA
+# PİNLENİR: `become_method`/`become_user`/`become_flags` burada, play
+# seviyesinde, açık literal değerlerle tanımlanır. DOĞRU SÖZLEŞME
+# (FIX1.1 ile netleştirilmiştir -- FIX1'deki "yalnız iki task etkilenir"
+# ifadesi YANLIŞTI, düzeltildi):
+#   - Play seviyesindeki `become: false` DEĞİŞMEDİ -- bu yüzden task'lar
+#     OTOMATİK olarak privilege escalation KAZANMAZ.
+#   - Ancak role genelinde AÇIKÇA `become: true` taşıyan HER task
+#     (bugün system_checks.yml/apply.yml/post_verify.yml'de birden fazla
+#     task var -- bu bir SABİT SAYI DEĞİLDİR, role geliştikçe yeni
+#     privileged task'lar eklenebilir/mevcutlar kaldırılabilir) bu üç
+#     değeri MİRAS alır.
+#   - `become: true` TAŞIMAYAN task'lar (profile_lock_check.yml,
+#     os_check.yml gibi salt-okunur/local kontroller) etkilenmez.
+# `become_flags: "-H -S -n"` içindeki `-n` (non-interactive) sudo'ya
+# "parola gerekiyorsa PROMPT AÇMA, doğrudan hata ile çık" talimatını
+# verir -- bu, TÜM become:true task'ların non-interaktif kalacağı
+# iddiasının DAYANDIĞI GERÇEK MEKANİZMADIR; "DORAnsible become-parolası
+# saklamıyor/göndermiyor" GÖZLEMİ bunun YERİNE geçmez, ona EK bir
+# savunma katmanıdır (bkz. README.md "Otomatik SSH/sudo önkoşulu").
+# `-H` hedef kullanıcının (root) HOME'unu ayarlar, `-S` (varsa) parolayı
+# stdin'den okumaya çalışır -- ama `-n` ile birlikte, parola GEREKİYORSA
+# sudo yine de PROMPT AÇMADAN doğrudan başarısız olur.
+
+- name: Ubuntu SSH Hardening
+  hosts: all
+  gather_facts: true
+  become: false
+  become_method: sudo
+  become_user: root
+  become_flags: "-H -S -n"
+  serial: 1
+  roles:
+    - ssh_hardening

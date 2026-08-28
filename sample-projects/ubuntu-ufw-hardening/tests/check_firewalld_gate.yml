@@ -1,0 +1,22 @@
+---
+# tests/check_firewalld_gate.yml
+#
+# Offline: roles/ufw_hardening/tasks/firewalld_gate_assert.yml SAF
+# mantığını, sahte bir `ufw_hardening_firewalld_status` register'ıyla
+# (rc/stdout) doğrudan çalıştırır. Gerçek `systemctl`/host/sudo gerekmez.
+
+- name: UFW Hardening offline firewalld-gate harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ufw_hardening_firewalld_status:
+      rc: "{{ fake_firewalld_rc | default(4) }}"
+      stdout: "{{ fake_firewalld_stdout | default('inactive') }}"
+  tasks:
+    - name: firewalld gate'ini çalıştır
+      ansible.builtin.import_tasks: ../roles/ufw_hardening/tasks/firewalld_gate_assert.yml
+
+    - name: "[TEST MARKER] apply.yml buraya kadar ulaşılırsa çalışırdı"
+      ansible.builtin.debug:
+        msg: "APPLY_CHAIN_WOULD_RUN"

@@ -1,0 +1,305 @@
+---
+# roles/ufw_audit/tasks/checks.yml
+#
+# Host'a bağlı olmayan saf değerlendirme mantığı. main.yml bunu gerçek
+# `ufw status verbose` / `systemctl is-active` / `/etc/default/ufw` okuma
+# task'larından SONRA çağırır; offline regresyon testleri (../../../tests)
+# aynı sonucu sahte (fixture) girdilerle, gerçek host veya sudo
+# gerektirmeden üretmek için bu dosyayı doğrudan import eder (bkz.
+# ../../../tests/run_checks.yml).
+#
+# Fail-closed sözleşmesi: her kontrol, okuduğu alanın **tam olarak bir
+# kez** ve tanınan bir biçimde göründüğünü önce doğrular. Alan eksikse,
+# birden fazla kez görülmüşse (duplicate) veya beklenmeyen/ayrıştırılamaz
+# bir değer taşıyorsa kontrol NON-COMPLIANT sayılır; boş veya belirsiz bir
+# değer hiçbir zaman sessizce compliant kabul edilmez.
+#
+# Beklenen girdi değişkenleri (main.yml tarafından gerçek komutlardan,
+# tests/run_checks.yml tarafından fixture'lardan doldurulur):
+#   - ufw_audit_binary_stat.stat.{exists,executable}
+#   - ufw_audit_status_verbose.{rc,stdout_lines}   ("ufw status verbose")
+#   - ufw_audit_firewalld_status.{rc,stdout}       ("systemctl is-active firewalld")
+#   - ufw_audit_ufw_service_status.stdout          ("systemctl is-active ufw.service", bilgi amaçlı)
+#   - ufw_audit_default_ufw_raw                    ("/etc/default/ufw" ham içeriği)
+#   - ansible_port                                  (inventory'den; yoksa 22 varsayılır)
+
+- name: "UFW Audit | ufw binary mevcut ve çalıştırılabilir mi"
+  ansible.builtin.assert:
+    that:
+      - ufw_audit_binary_stat.stat.exists
+      - ufw_audit_binary_stat.stat.executable
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: /usr/sbin/ufw bulunamadı veya çalıştırılabilir
+      değil (exists={{ ufw_audit_binary_stat.stat.exists }},
+      executable={{ ufw_audit_binary_stat.stat.executable | default(false) }}).
+      UFW paketi kurulu olmayabilir.
+    success_msg: "COMPLIANT: /usr/sbin/ufw mevcut ve çalıştırılabilir."
+  ignore_errors: true
+  register: ufw_audit_check_binary
+
+- name: "UFW Audit | UFW gerçekten active mi (ufw status verbose)"
+  # Karar YALNIZ bu satıra dayanır -- ufw.service'in systemd durumu (bkz.
+  # main.yml'deki bilgi amaçlı task ve aşağıdaki debug task'ı) TEK BAŞINA
+  # "active" saymak için kullanılmaz. rc != 0 (örn. ufw kurulu değilken
+  # komut çalıştırılamadığında) her zaman fail-closed'dır.
+  vars:
+    ufw_audit_status_lines: "{{ ufw_audit_status_verbose.stdout_lines | default([]) }}"
+    # DİKKAT: bu ismi hiçbir extra-var/ortam değişkeniyle ASLA aynı yapma --
+    # `ufw_audit_status_verbose.rc` ifadesinin kendisi (bkz. tests/run_checks.yml)
+    # bir extra-var'ın adını `default()` ile okur; task-local bir var aynı adı
+    # taşırsa Jinja o adı EN İÇTEKİ (bu task'ın) scope'unda bulur ve ifade
+    # kendi kendini çağırır -- sonsuz döngü/"Recursive loop detected in
+    # template" hatasına yol açar. Bu yüzden isim kasıtlı olarak `_value`
+    # soneki taşır.
+    ufw_audit_status_rc_value: "{{ ufw_audit_status_verbose.rc | default(-1) }}"
+    ufw_audit_status_field_lines: "{{ ufw_audit_status_lines | select('match', '^Status:\\s') | list }}"
+    ufw_audit_status_value: "{{ ((ufw_audit_status_field_lines + ['Status: unset'])[0].split(':', 1)[1]) | trim }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_audit_status_rc_value | int == 0
+      - ufw_audit_status_field_lines | length == 1
+      - ufw_audit_status_value == "active"
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: ufw status verbose rc={{ ufw_audit_status_rc_value }},
+      'Status:' satırı {{ ufw_audit_status_field_lines | length }} kez görüldü
+      (1 bekleniyor), değer='{{ ufw_audit_status_value }}' ('active' bekleniyor).
+      ufw.service'in systemd durumu bu karara dahil DEĞİLDİR (bkz. README.md).
+    success_msg: "COMPLIANT: UFW active (ufw status verbose: Status: active)."
+  ignore_errors: true
+  register: ufw_audit_check_active
+
+- name: "UFW Audit | ufw.service systemd durumu (bilgi amaçlı, tek başına yeterli sayılmaz)"
+  ansible.builtin.debug:
+    msg: >-
+      ufw.service systemd durumu (bilgi amaçlı, compliance kararına dahil
+      DEĞİLDİR)={{ ufw_audit_ufw_service_status.stdout | default('bilinmiyor') | trim }}
+
+- name: "UFW Audit | firewalld çatışması yok mu (fail-closed, rc + stdout birlikte)"
+  # Karar YALNIZ stdout'un 'active' olup olmadığına dayanmaz -- rc de
+  # değerlendirmeye katılır. `systemctl is-active <unit>` sözleşmesi:
+  #   rc=0, stdout=active      -> unit çalışıyor (ÇAKIŞMA, her zaman NON-COMPLIANT)
+  #   rc=3, stdout=inactive    -> unit kurulu/yüklü ama çalışmıyor (güvenli)
+  #   rc=4, stdout=inactive|unknown -> unit hiç bulunamadı/kurulu değil (güvenli)
+  # Bu üç kombinasyon DIŞINDAKİ her rc/stdout ikilisi -- rc/stdout çelişkisi,
+  # command hatası (izin/bus hatası dahil), beklenmeyen rc, boş veya
+  # tanınmayan stdout ("failed", "activating", "" gibi) -- fail-closed
+  # NON-COMPLIANT sayılır; asla sessizce compliant kabul edilmez. stdout
+  # 'active' ise rc ne olursa olsun (savunma amaçlı: rc'ye güvenilmez)
+  # sonuç her zaman NON-COMPLIANT'tır. Kabul edilen tam matris için bkz.
+  # README.md "Firewalld karar matrisi".
+  vars:
+    ufw_audit_firewalld_stdout: "{{ (ufw_audit_firewalld_status.stdout | default('')) | trim }}"
+    ufw_audit_firewalld_rc_raw: "{{ ufw_audit_firewalld_status.rc | default(-1) }}"
+    ufw_audit_firewalld_rc_valid_format: "{{ (ufw_audit_firewalld_rc_raw | string) is match('^-?[0-9]+$') }}"
+    ufw_audit_firewalld_rc_value: "{{ ((ufw_audit_firewalld_rc_raw | string) | int) if ufw_audit_firewalld_rc_valid_format else -999 }}"
+    ufw_audit_firewalld_is_active: "{{ ufw_audit_firewalld_stdout == 'active' }}"
+    ufw_audit_firewalld_is_recognized_safe: "{{ (ufw_audit_firewalld_rc_value == 3 and ufw_audit_firewalld_stdout == 'inactive') or (ufw_audit_firewalld_rc_value == 4 and ufw_audit_firewalld_stdout in ['inactive', 'unknown']) }}"
+  ansible.builtin.assert:
+    that:
+      - not ufw_audit_firewalld_is_active
+      - ufw_audit_firewalld_is_recognized_safe
+    fail_msg: >-
+      {{
+        "NON-COMPLIANT/FAIL-CLOSED: firewalld aktif (systemctl is-active firewalld rc="
+        ~ ufw_audit_firewalld_rc_raw ~ ", stdout='" ~ ufw_audit_firewalld_stdout
+        ~ "'); UFW ile aynı anda çalışan firewalld beklenmeyen/çelişkili kural davranışına yol açabilir."
+        if ufw_audit_firewalld_is_active else
+        "NON-COMPLIANT/FAIL-CLOSED: firewalld durumu güvenle inactive/kurulu-değil olarak doğrulanamadı (rc="
+        ~ ufw_audit_firewalld_rc_raw ~ ", stdout='" ~ ufw_audit_firewalld_stdout
+        ~ "'). Kabul edilen tek güvenli kombinasyonlar: rc=3/stdout=inactive veya "
+        ~ "rc=4/stdout=inactive|unknown (bkz. README.md \"Firewalld karar matrisi\"); "
+        ~ "bunların dışındaki her kombinasyon fail-closed NON-COMPLIANT sayılır."
+      }}
+    success_msg: >-
+      COMPLIANT: firewalld güvenle inactive/kurulu-değil
+      (rc={{ ufw_audit_firewalld_rc_raw }}, stdout='{{ ufw_audit_firewalld_stdout }}').
+  ignore_errors: true
+  register: ufw_audit_check_firewalld
+
+- name: "UFW Audit | /etc/default/ufw: IPV6 profile uygun mu"
+  vars:
+    ufw_audit_default_ufw_lines: "{{ ufw_audit_default_ufw_raw.split('\n') }}"
+    ufw_audit_field_lines: "{{ ufw_audit_default_ufw_lines | select('match', '^IPV6\\s*=') | list }}"
+    ufw_audit_field_raw: "{{ (ufw_audit_field_lines + ['IPV6=__unset__'])[0].split('=', 1)[1] | trim }}"
+    ufw_audit_field_value: "{{ ufw_audit_field_raw | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_audit_field_well_formed: "{{ ufw_audit_field_value is match('^[A-Za-z0-9_]+$') }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_audit_field_lines | length == 1
+      - ufw_audit_field_well_formed
+      - ufw_audit_field_value == ufw_audit_expected_ipv6
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: IPV6 /etc/default/ufw içinde
+      {{ ufw_audit_field_lines | length }} kez görüldü (1 bekleniyor),
+      değer='{{ ufw_audit_field_value }}', beklenen='{{ ufw_audit_expected_ipv6 }}'.
+    success_msg: "COMPLIANT: IPV6={{ ufw_audit_field_value }}."
+  ignore_errors: true
+  register: ufw_audit_check_ipv6
+
+- name: "UFW Audit | /etc/default/ufw: DEFAULT_INPUT_POLICY profile uygun mu"
+  vars:
+    ufw_audit_default_ufw_lines: "{{ ufw_audit_default_ufw_raw.split('\n') }}"
+    ufw_audit_field_lines: "{{ ufw_audit_default_ufw_lines | select('match', '^DEFAULT_INPUT_POLICY\\s*=') | list }}"
+    ufw_audit_field_raw: "{{ (ufw_audit_field_lines + ['DEFAULT_INPUT_POLICY=__unset__'])[0].split('=', 1)[1] | trim }}"
+    ufw_audit_field_value: "{{ ufw_audit_field_raw | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_audit_field_well_formed: "{{ ufw_audit_field_value is match('^[A-Za-z0-9_]+$') }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_audit_field_lines | length == 1
+      - ufw_audit_field_well_formed
+      - ufw_audit_field_value == ufw_audit_expected_default_input_policy
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: DEFAULT_INPUT_POLICY /etc/default/ufw içinde
+      {{ ufw_audit_field_lines | length }} kez görüldü (1 bekleniyor),
+      değer='{{ ufw_audit_field_value }}',
+      beklenen='{{ ufw_audit_expected_default_input_policy }}'.
+    success_msg: "COMPLIANT: DEFAULT_INPUT_POLICY={{ ufw_audit_field_value }}."
+  ignore_errors: true
+  register: ufw_audit_check_input_policy
+
+- name: "UFW Audit | /etc/default/ufw: DEFAULT_OUTPUT_POLICY profile uygun mu"
+  vars:
+    ufw_audit_default_ufw_lines: "{{ ufw_audit_default_ufw_raw.split('\n') }}"
+    ufw_audit_field_lines: "{{ ufw_audit_default_ufw_lines | select('match', '^DEFAULT_OUTPUT_POLICY\\s*=') | list }}"
+    ufw_audit_field_raw: "{{ (ufw_audit_field_lines + ['DEFAULT_OUTPUT_POLICY=__unset__'])[0].split('=', 1)[1] | trim }}"
+    ufw_audit_field_value: "{{ ufw_audit_field_raw | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_audit_field_well_formed: "{{ ufw_audit_field_value is match('^[A-Za-z0-9_]+$') }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_audit_field_lines | length == 1
+      - ufw_audit_field_well_formed
+      - ufw_audit_field_value == ufw_audit_expected_default_output_policy
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: DEFAULT_OUTPUT_POLICY /etc/default/ufw içinde
+      {{ ufw_audit_field_lines | length }} kez görüldü (1 bekleniyor),
+      değer='{{ ufw_audit_field_value }}',
+      beklenen='{{ ufw_audit_expected_default_output_policy }}'.
+    success_msg: "COMPLIANT: DEFAULT_OUTPUT_POLICY={{ ufw_audit_field_value }}."
+  ignore_errors: true
+  register: ufw_audit_check_output_policy
+
+- name: "UFW Audit | /etc/default/ufw: DEFAULT_FORWARD_POLICY profile uygun mu"
+  vars:
+    ufw_audit_default_ufw_lines: "{{ ufw_audit_default_ufw_raw.split('\n') }}"
+    ufw_audit_field_lines: "{{ ufw_audit_default_ufw_lines | select('match', '^DEFAULT_FORWARD_POLICY\\s*=') | list }}"
+    ufw_audit_field_raw: "{{ (ufw_audit_field_lines + ['DEFAULT_FORWARD_POLICY=__unset__'])[0].split('=', 1)[1] | trim }}"
+    ufw_audit_field_value: "{{ ufw_audit_field_raw | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_audit_field_well_formed: "{{ ufw_audit_field_value is match('^[A-Za-z0-9_]+$') }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_audit_field_lines | length == 1
+      - ufw_audit_field_well_formed
+      - ufw_audit_field_value == ufw_audit_expected_default_forward_policy
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: DEFAULT_FORWARD_POLICY /etc/default/ufw içinde
+      {{ ufw_audit_field_lines | length }} kez görüldü (1 bekleniyor),
+      değer='{{ ufw_audit_field_value }}',
+      beklenen='{{ ufw_audit_expected_default_forward_policy }}'.
+    success_msg: "COMPLIANT: DEFAULT_FORWARD_POLICY={{ ufw_audit_field_value }}."
+  ignore_errors: true
+  register: ufw_audit_check_forward_policy
+
+- name: "UFW Audit | Logging açık ve güvenli düzeyde mi (ufw status verbose)"
+  # "Logging: on (<level>)" biçimini regex grup indeksleme (regex_search
+  # match[1]) yerine, izin verilen her seviye için tam beklenen satırı
+  # üretip üyelik testiyle (`in`) karşılaştırarak doğrular -- bu, eşleşme
+  # bulunamadığında ASLA istisna atmaz (ssh_audit/checks.yml'deki aynı
+  # güvenli-indeksleme prensibi, bkz. o dosyadaki LoginGraceTime notu).
+  vars:
+    ufw_audit_status_lines: "{{ ufw_audit_status_verbose.stdout_lines | default([]) }}"
+    ufw_audit_logging_field_lines: "{{ ufw_audit_status_lines | select('match', '^Logging:\\s') | list }}"
+    ufw_audit_logging_line: "{{ (ufw_audit_logging_field_lines + ['Logging: unset'])[0] }}"
+    ufw_audit_logging_compliant_lines: "{{ ufw_audit_logging_allowed_levels | map('regex_replace', '^(.*)$', 'Logging: on (\\1)') | list }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_audit_logging_field_lines | length == 1
+      - ufw_audit_logging_line in ufw_audit_logging_compliant_lines
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: 'Logging:' satırı
+      {{ ufw_audit_logging_field_lines | length }} kez görüldü (1 bekleniyor),
+      satır='{{ ufw_audit_logging_line }}', kabul edilen biçimler:
+      {{ ufw_audit_logging_compliant_lines }} ('off' veya ayrıştırılamayan bir
+      seviye her zaman NON-COMPLIANT'tır).
+    success_msg: "COMPLIANT: {{ ufw_audit_logging_line }}."
+  ignore_errors: true
+  register: ufw_audit_check_logging
+
+- name: "UFW Audit | Inventory SSH portu geçerli mi (1..65535)"
+  # ansible_port inventory'de tanımlı değilse Ansible'ın gerçek SSH
+  # bağlantısı için varsayılan davranışıyla tutarlı biçimde 22 varsayılır.
+  # Sayısal biçim önce `is match` ile doğrulanır (ssh_audit/checks.yml'deki
+  # aynı gerekçeyle: `| int` filtresi sayısal olmayan bir string üzerinde
+  # şablon istisnası atabilir) -- bu yüzden ayrıştırılamayan bir değer ASLA
+  # `| int`'e gönderilmez, doğrudan fail-closed sayılır.
+  vars:
+    ufw_audit_ssh_port_raw: "{{ ansible_port | default(22) }}"
+    ufw_audit_ssh_port_valid_format: "{{ (ufw_audit_ssh_port_raw | string) is match('^[0-9]+$') }}"
+    ufw_audit_ssh_port_numeric: "{{ ((ufw_audit_ssh_port_raw | string) | int) if ufw_audit_ssh_port_valid_format else -1 }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_audit_ssh_port_valid_format
+      - ufw_audit_ssh_port_numeric | int >= 1
+      - ufw_audit_ssh_port_numeric | int <= 65535
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: ansible_port='{{ ufw_audit_ssh_port_raw }}'
+      geçerli bir 1..65535 port numarası değil (sayısal biçim
+      {{ 'geçerli' if ufw_audit_ssh_port_valid_format else 'GEÇERSİZ' }}).
+    success_msg: "COMPLIANT: SSH portu={{ ufw_audit_ssh_port_numeric }}."
+  ignore_errors: true
+  register: ufw_audit_check_ssh_port
+
+- name: "UFW Audit | SSH portu için en az bir TCP allow kuralı var mı"
+  # Yalnız açıkça desteklenen `ufw status verbose` biçimleri kabul edilir:
+  #   "<port>/tcp ALLOW IN <kaynak>", "<port> ALLOW IN <kaynak>" (protokol
+  #   verilmemişse hem tcp hem udp'yi kapsar) ve bunların "(v6)" IPv6
+  #   varyantları. Uygulama profili tabanlı kurallar ("OpenSSH ALLOW IN
+  #   Anywhere" gibi) veya port ARALIĞI kuralları ("6000:6007/tcp ALLOW IN
+  #   Anywhere") KASITLI OLARAK eşleşmez -- bunlar bu port için açık ve
+  #   tekil bir izin olduğunu KANITLAMAZ (bkz. README.md "Desteklenen ufw
+  #   status verbose biçimleri"); belirsiz/tanınmayan çıktı ASLA compliant
+  #   sayılmaz. Yalnızca "ALLOW IN" eylemi kabul edilir; "LIMIT IN" (rate
+  #   limited) veya "DENY"/"REJECT" bu kontrolü sağlamaz.
+  vars:
+    ufw_audit_status_lines: "{{ ufw_audit_status_verbose.stdout_lines | default([]) }}"
+    ufw_audit_ssh_port_raw: "{{ ansible_port | default(22) }}"
+    ufw_audit_ssh_port_valid_format: "{{ (ufw_audit_ssh_port_raw | string) is match('^[0-9]+$') }}"
+    ufw_audit_ssh_port_numeric: "{{ ((ufw_audit_ssh_port_raw | string) | int) if ufw_audit_ssh_port_valid_format else -1 }}"
+    ufw_audit_ssh_allow_pattern: "^{{ ufw_audit_ssh_port_numeric }}(/tcp)?( \\(v6\\))?\\s+ALLOW\\s+IN\\s+\\S.*$"
+    ufw_audit_ssh_allow_lines: "{{ ufw_audit_status_lines | select('match', ufw_audit_ssh_allow_pattern) | list }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_audit_ssh_allow_lines | length >= 1
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: SSH portu {{ ufw_audit_ssh_port_numeric }}/tcp
+      için `ufw status verbose` çıktısında desteklenen biçimde bir "ALLOW IN"
+      kuralı bulunamadı (0 satır eşleşti). Uygulama profili tabanlı kurallar
+      veya port aralıkları bu kontrolü SAĞLAMAZ.
+    success_msg: >-
+      COMPLIANT: SSH portu {{ ufw_audit_ssh_port_numeric }}/tcp için
+      {{ ufw_audit_ssh_allow_lines | length }} allow kuralı bulundu:
+      {{ ufw_audit_ssh_allow_lines }}.
+  ignore_errors: true
+  register: ufw_audit_check_ssh_allow_rule
+
+- name: "UFW Audit | Sonuç: uyumluluk özeti"
+  ansible.builtin.assert:
+    that:
+      - ufw_audit_check_binary is succeeded
+      - ufw_audit_check_active is succeeded
+      - ufw_audit_check_firewalld is succeeded
+      - ufw_audit_check_ipv6 is succeeded
+      - ufw_audit_check_input_policy is succeeded
+      - ufw_audit_check_output_policy is succeeded
+      - ufw_audit_check_forward_policy is succeeded
+      - ufw_audit_check_logging is succeeded
+      - ufw_audit_check_ssh_port is succeeded
+      - ufw_audit_check_ssh_allow_rule is succeeded
+    fail_msg: >-
+      NON-COMPLIANT: bir veya daha fazla UFW kontrolü uygunsuz. Ayrıntı için
+      yukarıdaki kontrol task'larına bakın.
+    success_msg: >-
+      COMPLIANT: tüm UFW kontrolleri (binary, active, firewalld çatışması,
+      IPV6/DEFAULT_INPUT_POLICY/DEFAULT_OUTPUT_POLICY/DEFAULT_FORWARD_POLICY,
+      logging, SSH portu geçerliliği, SSH allow kuralı) beklenen profille
+      uyumlu. Bu, tam ağ güvenliği garantisi DEĞİLDİR -- bkz. README.md
+      "Sınırlar" (örn. Docker/custom nftables trafiği UFW'yi bypass edebilir).

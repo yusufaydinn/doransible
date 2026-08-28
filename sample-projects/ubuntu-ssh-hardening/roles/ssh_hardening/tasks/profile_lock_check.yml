@@ -1,0 +1,167 @@
+---
+# roles/ssh_hardening/tasks/profile_lock_check.yml
+#
+# BULGU4: bu dilimde güvenlik profili özelleştirilebilir DEĞİLDİR --
+# yönetilen path, desteklenen Ubuntu sürüm listesi, 8 exact + 2
+# bounded-numeric baseline değeri ve reconnect zaman aşımı ayarları
+# sabittir (audit'in varsayılanlarıyla birebir aynı). defaults/main.yml'deki
+# ssh_hardening_* değişkenleri
+# group_vars, host_vars veya (bu backend'de bugün mümkün olmasa da)
+# extra_vars ile TEORİK olarak override edilebileceği için, bu dosya
+# ONLARLA karşılaştırma yapmaz -- kendi İÇİNDE, hiçbir dış katmandan
+# etkilenmeyen SABİT (literal) beklenen değerlerle karşılaştırır.
+#
+# FIX1.1: bu literal değerler BİLEREK bir task-level `vars:` bloğunda
+# ADLANDIRILMIŞ DEĞİŞKENLER olarak TUTULMAZ; doğrudan `that:`/`fail_msg`
+# Jinja ifadelerinin İÇİNE gömülüdür. Gerekçe: `vars:` altında
+# tanımlanan bir isim (ör. eski `ssh_hardening_locked_baseline`) YİNE DE
+# bir Ansible değişken adıdır ve Ansible'ın değişken önceliği sırasında
+# `set_fact`/registered vars (19) ve `extra vars` (22), task vars'tan
+# (17) DAHA YÜKSEK önceliğe sahiptir -- yani play içinde daha önce
+# çalışan bir `set_fact` (veya, bu backend'de bugün mümkün olmasa da, bir
+# extra-var) AYNI ADI kullanarak o "kilit" değerini GÖLGELEYEBİLİRDİ.
+# Burada hiçbir isim yoktur; gölgelenecek bir şey kalmaz.
+#
+# Bu kontrol olmasaydı şöyle bir açık kalırdı: ssh_hardening_baseline_fields_exact/
+# ssh_hardening_baseline_fields_numeric listelerindeki `expected`/`max`/
+# `max_seconds` alanları ssh_hardening_permit_root_login gibi AYNI
+# overridable değişkenlerden Jinja ile türetilir -- biri bu değişkeni
+# override ederse hem YAZILAN içerik hem de onu DOĞRULAYAN beklenti birlikte
+# kayar ve compliance_assert.yml bunu YAKALAYAMAZ (ikisi de aynı bozuk
+# kaynaktan besleniyor olur). Bu dosya üçüncü, BAĞIMSIZ bir referans
+# noktasıdır ve sapma varsa apply.yml'e hiç ulaşılmadan, HİÇBİR DOSYA
+# YAZILMADAN fail-closed durur.
+#
+# LIVE-AUDIT-FIX2: baseline artık 8 EXACT (boolean/enum) alan + 2
+# BOUNDED-NUMERIC (maxauthtries/logingracetime, ubuntu-ssh-audit ile
+# birebir hizalı üst-sınır semantiği) alan olarak dürüstçe ayrılmıştır
+# (bkz. defaults/main.yml ve compliance_assert.yml). Bu dosya HER İKİ
+# yapıyı da (anahtarlar, exact beklenen değerler VE bounded üst
+# sınırları) aşağıda AYRI AYRI, yine literal/gölgelenemez referanslarla
+# kilitler.
+#
+# tests/check_profile_lock.yml bu dosyayı gerçek bir hedef olmadan,
+# override edilmiş (bozulmuş) değişkenlerle -- ve FIX1.1 kapsamında,
+# hem gerçek değişkeni HEM DE eski "kilit" adını taklit eden bir
+# extra-var'ı BİRLİKTE vererek -- doğrudan import ederek test eder
+# (BULGU4/FIX1.1 regresyon kanıtı).
+
+- name: "SSH Hardening | Profil kilidi: yönetilen path sapmamış mı"
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_managed_drop_in_path == "/etc/ssh/sshd_config.d/00-doransible-ssh-hardening.conf"
+    fail_msg: >-
+      FAIL-CLOSED: ssh_hardening_managed_drop_in_path
+      ('{{ ssh_hardening_managed_drop_in_path }}') beklenen sabit değerden
+      ('/etc/ssh/sshd_config.d/00-doransible-ssh-hardening.conf') sapmış.
+      Bu dilimde yönetilen path özelleştirilemez; hiçbir dosya yazılmadı.
+    success_msg: "Yönetilen path sabit değerle eşleşiyor."
+
+- name: "SSH Hardening | Profil kilidi: desteklenen Ubuntu sürüm listesi sapmamış mı"
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_supported_ubuntu_versions == ["22.04", "24.04"]
+    fail_msg: >-
+      FAIL-CLOSED: ssh_hardening_supported_ubuntu_versions
+      ({{ ssh_hardening_supported_ubuntu_versions }}) beklenen sabit
+      listeden (["22.04", "24.04"]) sapmış. Bu dilimde desteklenen sürüm
+      listesi özelleştirilemez; hiçbir dosya yazılmadı.
+    success_msg: "Desteklenen Ubuntu sürüm listesi sabit değerle eşleşiyor."
+
+- name: "SSH Hardening | Profil kilidi: 8 exact + 2 numeric write-default değeri sapmamış mı"
+  # Not: maxauthtries/logingracetime burada HÂLÂ exact (6/60) kilitlenir --
+  # bunlar TEMPLATE'in YAZDIĞI güvenli varsayılan değerlerdir (ne
+  # yazılacağı), DOĞRULAMA (compliance) tarafının üst sınırlarıyla
+  # (aşağıdaki ayrı assert) KARIŞTIRILMAMALIDIR (bkz. LIVE-AUDIT-FIX2
+  # notu ve README.md "Profil kilidi").
+  ansible.builtin.assert:
+    that:
+      - (ssh_hardening_permit_root_login | string) == "no"
+      - (ssh_hardening_password_authentication | string) == "no"
+      - (ssh_hardening_pubkey_authentication | string) == "yes"
+      - (ssh_hardening_permit_empty_passwords | string) == "no"
+      - (ssh_hardening_kbd_interactive_authentication | string) == "no"
+      - (ssh_hardening_x11_forwarding | string) == "no"
+      - (ssh_hardening_allow_agent_forwarding | string) == "no"
+      - (ssh_hardening_allow_tcp_forwarding | string) == "no"
+      - (ssh_hardening_max_auth_tries | string) == "6"
+      - (ssh_hardening_login_grace_time | string) == "60"
+    fail_msg: >-
+      FAIL-CLOSED: bir veya daha fazla baseline değişkeni sabit audit
+      değerinden sapmış. Bu dilimde güvenlik profili özelleştirilemez;
+      hiçbir dosya yazılmadı. Mevcut:
+      permitrootlogin={{ ssh_hardening_permit_root_login }},
+      passwordauthentication={{ ssh_hardening_password_authentication }},
+      pubkeyauthentication={{ ssh_hardening_pubkey_authentication }},
+      permitemptypasswords={{ ssh_hardening_permit_empty_passwords }},
+      kbdinteractiveauthentication={{ ssh_hardening_kbd_interactive_authentication }},
+      x11forwarding={{ ssh_hardening_x11_forwarding }},
+      allowagentforwarding={{ ssh_hardening_allow_agent_forwarding }},
+      allowtcpforwarding={{ ssh_hardening_allow_tcp_forwarding }},
+      maxauthtries={{ ssh_hardening_max_auth_tries }},
+      logingracetime={{ ssh_hardening_login_grace_time }}.
+    success_msg: "8 exact + 2 numeric write-default değeri sabit audit değerleriyle eşleşiyor."
+
+- name: "SSH Hardening | Profil kilidi: MaxAuthTries/LoginGraceTime bounded-policy üst sınırları sapmamış mı"
+  # LIVE-AUDIT-FIX2: DOĞRULAMA (compliance) tarafının kullandığı üst
+  # sınırlar -- yukarıdaki write-default değerlerinden AYRI, ubuntu-ssh-audit
+  # ile birebir aynı (ssh_audit_max_auth_tries_max=6,
+  # ssh_audit_login_grace_time_max_seconds=60).
+  ansible.builtin.assert:
+    that:
+      - (ssh_hardening_max_auth_tries_max | string) == "6"
+      - (ssh_hardening_login_grace_time_max_seconds | string) == "60"
+    fail_msg: >-
+      FAIL-CLOSED: bounded-numeric compliance üst sınırları
+      (ssh_hardening_max_auth_tries_max={{ ssh_hardening_max_auth_tries_max }},
+      ssh_hardening_login_grace_time_max_seconds={{ ssh_hardening_login_grace_time_max_seconds }})
+      beklenen sabit değerlerden (6/60) sapmış. Bu dilimde bu sınırlar
+      özelleştirilemez; hiçbir dosya yazılmadı.
+    success_msg: "MaxAuthTries/LoginGraceTime bounded-policy üst sınırları sabit değerlerle eşleşiyor (6/60)."
+
+- name: "SSH Hardening | Profil kilidi: exact (8) alan listesi eksiltilmemiş/değiştirilmemiş mi"
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_baseline_fields_exact | length == 8
+      - (ssh_hardening_baseline_fields_exact | map(attribute='key') | list) == ["permitrootlogin", "passwordauthentication", "pubkeyauthentication", "permitemptypasswords", "kbdinteractiveauthentication", "x11forwarding", "allowagentforwarding", "allowtcpforwarding"]
+      - (ssh_hardening_baseline_fields_exact | map(attribute='expected') | map('string') | list) == ["no", "no", "yes", "no", "no", "no", "no", "no"]
+    fail_msg: >-
+      FAIL-CLOSED: ssh_hardening_baseline_fields_exact listesi (pre-reload/
+      post-reload compliance kontrolünün EXACT string eşitliğiyle
+      değerlendirdiği 8 boolean/enum alan) beklenen 8 alandan
+      (permitrootlogin, passwordauthentication, pubkeyauthentication,
+      permitemptypasswords, kbdinteractiveauthentication, x11forwarding,
+      allowagentforwarding, allowtcpforwarding) veya beklenen
+      değerlerinden sapmış -- eksiltilmiş, sıra değiştirilmiş, farklı bir
+      alan eklenmiş ya da bir `expected` değeri doğrudan değiştirilmiş
+      olabilir. Hiçbir dosya yazılmadı.
+    success_msg: "Exact alan listesi tam, doğru sırada ve beklenen değerlerle (8/8)."
+
+- name: "SSH Hardening | Profil kilidi: bounded-numeric (2) policy listesi eksiltilmemiş/değiştirilmemiş mi"
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_baseline_fields_numeric | length == 2
+      - (ssh_hardening_baseline_fields_numeric | map(attribute='key') | list) == ["maxauthtries", "logingracetime"]
+      - (ssh_hardening_baseline_fields_numeric[0].max | string) == "6"
+      - (ssh_hardening_baseline_fields_numeric[1].max_seconds | string) == "60"
+    fail_msg: >-
+      FAIL-CLOSED: ssh_hardening_baseline_fields_numeric listesi
+      (pre-reload/post-reload compliance kontrolünün ÜST-SINIRLI (bounded)
+      politikayla değerlendirdiği maxauthtries/logingracetime) beklenen 2
+      alandan (maxauthtries max=6, logingracetime max_seconds=60) sapmış --
+      eksiltilmiş, sıra değiştirilmiş, farklı bir alan eklenmiş ya da bir
+      sınır değeri doğrudan değiştirilmiş olabilir. Hiçbir dosya yazılmadı.
+    success_msg: "Bounded-numeric policy listesi tam, doğru sırada ve beklenen sınırlarla (2/2)."
+
+- name: "SSH Hardening | Profil kilidi: reconnect timeout/sleep sabit ve güvenli mi"
+  ansible.builtin.assert:
+    that:
+      - (ssh_hardening_reconnect_timeout_seconds | int) == 30
+      - (ssh_hardening_reconnect_sleep_seconds | int) == 2
+    fail_msg: >-
+      FAIL-CLOSED: reconnect zaman aşımı ayarları
+      (timeout={{ ssh_hardening_reconnect_timeout_seconds }},
+      sleep={{ ssh_hardening_reconnect_sleep_seconds }}) beklenen sabit
+      değerlerden (timeout=30, sleep=2) sapmış. Bu dilimde bu ayarlar
+      özelleştirilemez; hiçbir dosya yazılmadı.
+    success_msg: "Reconnect timeout/sleep sabit değerlerle eşleşiyor (30/2)."

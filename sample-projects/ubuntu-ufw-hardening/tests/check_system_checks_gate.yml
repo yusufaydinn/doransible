@@ -1,0 +1,60 @@
+---
+# tests/check_system_checks_gate.yml
+#
+# Davranışsal kanıt (ubuntu-ssh-hardening/tests/check_system_checks_gate.yml
+# ile AYNI desen): roles/ufw_hardening/tasks/system_checks.yml'in
+# passwordless sudo/root önkoşulunun (İLK ve TEK privileged gate),
+# önkoşul BAŞARISIZ olduğunda apply.yml'e (hiçbir UFW yazma komutuna) HİÇ
+# ULAŞILMADIĞINI, BAŞARILI olduğunda ise zincirin devam ettiğini
+# kanıtlamak.
+#
+# Gerçek `become: true` + `id -u` çağrısı bu offline sandbox'ta gerçek
+# root olmadan çalıştırılamaz. Bu yüzden bu harness, yalnızca `become`
+# gerektiren gerçek `id -u` komutunu, `fake_uid_check_stdout` ile sürülen
+# VE become GEREKTİRMEYEN bir test-double komutla (`/bin/echo`)
+# değiştirir, AYNI değişken adına (`ufw_hardening_uid_check`) register
+# eder. Assert'in KENDİSİ artık burada TEKRAR YAZILMAZ --
+# `../roles/ufw_hardening/tasks/uid_gate_assert.yml` (system_checks.yml'in
+# de import ettiği AYNI, TEK KAYNAKLI dosya) doğrudan import edilir.
+#
+# uid gate'in ARDINDAN gelen ufw binary/firewalld/ssh-port kontrolleri bu
+# ortamda GERÇEKTEN çalıştırılır (become gerektirmezler; bu sandbox'ta ufw
+# binary'si mevcuttur ve firewalld inaktiftir -- bkz. README.md
+# "Offline testler"). Ölçülen: uid gate BAŞARISIZ olduğunda sonraki
+# "apply chain marker" task'ının HİÇ ÇALIŞMAMASI; BAŞARILI olduğunda
+# ÇALIŞMASI.
+
+- name: Offline system_checks passwordless-sudo gate harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/ufw_hardening/defaults/main.yml
+  tasks:
+    - name: "[TEST DOUBLE] Passwordless sudo/root önkoşulu (id -u) -- gerçek become YOK"
+      ansible.builtin.command:
+        argv:
+          - /bin/echo
+          - "{{ fake_uid_check_stdout | default('0') }}"
+      changed_when: false
+      register: ufw_hardening_uid_check
+
+    - name: "UFW Hardening | UID=0 gate (ortak assert -- bkz. uid_gate_assert.yml)"
+      ansible.builtin.import_tasks: ../roles/ufw_hardening/tasks/uid_gate_assert.yml
+
+    - name: "UFW Hardening | ufw binary durumu (stat, root gerektirmez)"
+      ansible.builtin.stat:
+        path: /usr/sbin/ufw
+      register: ufw_hardening_binary_stat
+
+    - name: "UFW Hardening | ufw binary mevcut ve çalıştırılabilir mi"
+      ansible.builtin.assert:
+        that:
+          - ufw_hardening_binary_stat.stat.exists
+          - ufw_hardening_binary_stat.stat.executable
+        fail_msg: "FAIL-CLOSED: /usr/sbin/ufw bulunamadı veya çalıştırılabilir değil."
+        success_msg: "COMPLIANT: /usr/sbin/ufw mevcut ve çalıştırılabilir."
+
+    - name: "[TEST MARKER] apply.yml buraya kadar ulaşılırsa çalışırdı"
+      ansible.builtin.debug:
+        msg: "APPLY_CHAIN_WOULD_RUN"

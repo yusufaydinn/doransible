@@ -1,0 +1,126 @@
+---
+# roles/ssh_hardening/defaults/main.yml
+#
+# Bu role, sample-projects/ubuntu-ssh-audit'in tespit ettiği baseline'ı
+# UYGULAR (remediation). Aşağıdaki tekil değerler, audit role'ünün
+# roles/ssh_audit/defaults/main.yml içindeki güvenli varsayılanlarıyla
+# BİLEREK aynıdır -- audit "izin verilen değerler listesi" tutarken, bu
+# role tek bir hedef değer yazar ve sonradan tam o değeri arar (bkz.
+# tasks/compliance_assert.yml).
+#
+# BULGU4/FIX1.1: bu değişkenler audit'teki gibi "ortam profili" anlamında
+# override edilmek üzere TASARLANMADI: bunları değiştirmek, bu role'ün
+# UYGULADIĞI ve sonradan DOĞRULADIĞI baseline'ın kendisini değiştirir.
+# roles/ssh_hardening/tasks/profile_lock_check.yml, aşağıdaki
+# desteklenen sürüm listesinin, yönetilen path'in, 8 exact + 2
+# bounded-numeric baseline değerinin, ssh_hardening_baseline_fields_exact
+# ve ssh_hardening_baseline_fields_numeric listelerinin VE reconnect
+# timeout/sleep ayarlarının, bu dosyadan BAĞIMSIZ SABİT (literal, task
+# içine gömülü -- bir değişken ADI bile taşımayan) beklenen değerlerden
+# sapıp sapmadığını, apply.yml'e hiç ulaşılmadan, HİÇBİR DOSYA
+# YAZILMADAN en başta kontrol eder -- burada bir override yapılsa bile
+# role fail-closed durur. İlk dilimde AllowUsers/AllowGroups,
+# DenyUsers/DenyGroups, Ciphers/MACs/KexAlgorithms YÖNETİLMEZ -- bkz.
+# README.md "Yönetilen/yönetilmeyen alanlar".
+#
+# LIVE-AUDIT-FIX2: MaxAuthTries ve LoginGraceTime artık DOĞRULAMA
+# tarafında EXACT değil BOUNDED (üst-sınırlı) semantikle değerlendirilir
+# -- ubuntu-ssh-audit (roles/ssh_audit/tasks/checks.yml) ile BİREBİR
+# hizalı. Bkz. aşağıdaki ssh_hardening_max_auth_tries_max /
+# ssh_hardening_login_grace_time_max_seconds ve tasks/compliance_assert.yml.
+
+ssh_hardening_supported_ubuntu_versions:
+  - "22.04"
+  - "24.04"
+
+# R1-V3H4-SIMPLIFY: eskiden burada `ssh_hardening_confirm_key_based_access`
+# adlı, operatörün AYRI bir terminalde elle doğrulayıp project'in
+# group_vars/all.yml dosyasında elle true'ya çektiği bir manuel onay
+# mandalı vardı (bkz. git tarihi -- BULGU3). Bu mandal ve group_vars/
+# all.yml dosyası TAMAMEN KALDIRILDI. Hedefe key-based erişim +
+# passwordless sudo artık tasks/system_checks.yml tarafından, her
+# çalıştırmada GERÇEK bir bağlantı+yetki denemesiyle (`become` + `id -u`,
+# gerçek UID=0 assert'i) OTOMATİK doğrulanır -- ayrıntı için
+# tasks/main.yml başındaki R1-V3H4-SIMPLIFY notuna ve README.md
+# "Otomatik SSH/sudo önkoşulu" bölümüne bakın.
+
+# Yalnızca bu TEK dosya yönetilir. Adı bilinçli olarak "00-" ile başlar --
+# gerekçe için templates/managed-drop-in.conf.j2 başındaki yorum ve
+# README.md "Drop-in precedence kararı" bölümüne bakın.
+ssh_hardening_managed_drop_in_path: /etc/ssh/sshd_config.d/00-doransible-ssh-hardening.conf
+
+ssh_hardening_permit_root_login: "no"
+ssh_hardening_password_authentication: "no"
+ssh_hardening_pubkey_authentication: "yes"
+ssh_hardening_permit_empty_passwords: "no"
+ssh_hardening_kbd_interactive_authentication: "no"
+ssh_hardening_x11_forwarding: "no"
+ssh_hardening_allow_agent_forwarding: "no"
+ssh_hardening_allow_tcp_forwarding: "no"
+
+# MaxAuthTries/LoginGraceTime: bunlar TEMPLATE'in YAZDIĞI güvenli
+# varsayılan değerlerdir (managed-drop-in.conf.j2 hâlâ tam olarak bu
+# ikisini yazar) -- ama LIVE-AUDIT-FIX2 ile artık DOĞRULAMA (pre/post-
+# reload compliance) tarafında bu ikisiyle EXACT string eşitliği
+# ARANMAZ. Gerekçe: ubuntu-ssh-audit ile hizalanmak (bkz. aşağıdaki
+# ssh_hardening_max_auth_tries_max / ssh_hardening_login_grace_time_max_seconds
+# ve tasks/compliance_assert.yml) -- bu iki alan için DAHA SIKI (daha
+# düşük MaxAuthTries, daha kısa LoginGraceTime) bir değer güvenlik
+# açısından EN AZ bu varsayılan kadar güvenlidir; exact eşitlik,
+# precedence nedeniyle önde sıralanan başka (daha sıkı) bir drop-in'i
+# yanlışlıkla NON-COMPLIANT sayıp candidate'i geri alırdı (canlı bulgu:
+# /etc/ssh/sshd_config.d/00-ansible-hardening.conf, MaxAuthTries 3).
+ssh_hardening_max_auth_tries: 6
+ssh_hardening_login_grace_time: 60
+
+# LIVE-AUDIT-FIX2: MaxAuthTries/LoginGraceTime için DOĞRULAMA
+# (compliance) tarafının üst sınırları -- roles/ssh_audit/defaults/
+# main.yml'deki ssh_audit_max_auth_tries_max / ssh_audit_login_grace_time_max_seconds
+# ile BİREBİR AYNI değerler (audit ile compliance semantiği tam
+# hizalıdır). Alt sınır (MaxAuthTries için >=1, LoginGraceTime için
+# saniye karşılığı >0) audit'teki gibi sabit/literal olarak
+# compliance_assert.yml içine gömülüdür, ayrı bir değişken taşımaz.
+ssh_hardening_max_auth_tries_max: 6
+ssh_hardening_login_grace_time_max_seconds: 60
+
+# BULGU2/FIX1.1: reset_connection sonrası bounded wait_for_connection
+# için üst sınır ve poll aralığı (saniye). FIX1.1 ile profile_lock_check.yml
+# bu iki değeri de SABİT 30/2'ye kilitler (bkz. o dosyadaki ilgili
+# assert) -- "güvenli, pozitif, sıkı üst sınırlı" gereksinimi, bir aralık
+# kontrolü yerine bilinen-güvenli tek bir değere PIN ederek karşılanır
+# (diğer baseline değerleriyle aynı desen). Buradaki değerler değiştirilse
+# bile role, apply.yml'e ulaşmadan bu sapmayı yakalar.
+ssh_hardening_reconnect_timeout_seconds: 30
+ssh_hardening_reconnect_sleep_seconds: 2
+
+# tasks/compliance_assert.yml tarafından kullanılan, sshd -T alan adı ->
+# beklenen değer eşlemesi -- LIVE-AUDIT-FIX2 ile İKİ AYRI listeye
+# dürüstçe bölünmüştür (bkz. compliance_assert.yml):
+#
+#   1) ssh_hardening_baseline_fields_exact (8 boolean/enum alan): tam
+#      string eşitliğiyle değerlendirilir -- bunlar için "daha sıkı" diye
+#      bir kavram yoktur (ikili durumlar arasında sıkılık sıralaması
+#      yapılamaz), bu yüzden exact eşitlik doğru semantiktir.
+#   2) ssh_hardening_baseline_fields_numeric (2 sayısal alan --
+#      maxauthtries/logingracetime): ÜST-SINIRLI (bounded) semantikle
+#      değerlendirilir (ubuntu-ssh-audit ile birebir aynı) -- yazılan
+#      güvenli varsayılandan (6/60) DAHA SIKI bir değer de COMPLIANT
+#      sayılır.
+#
+# Yukarıdaki tekil değişkenlerden türetilir; doğrudan override edilmesi
+# beklenmez -- profile_lock_check.yml HER İKİ listenin İÇERİĞİNİ de
+# (anahtar VE beklenen değer/sınır) sabit bir referansla karşılaştırır
+# (bkz. yukarıdaki BULGU4 notu).
+ssh_hardening_baseline_fields_exact:
+  - {key: "permitrootlogin", expected: "{{ ssh_hardening_permit_root_login }}"}
+  - {key: "passwordauthentication", expected: "{{ ssh_hardening_password_authentication }}"}
+  - {key: "pubkeyauthentication", expected: "{{ ssh_hardening_pubkey_authentication }}"}
+  - {key: "permitemptypasswords", expected: "{{ ssh_hardening_permit_empty_passwords }}"}
+  - {key: "kbdinteractiveauthentication", expected: "{{ ssh_hardening_kbd_interactive_authentication }}"}
+  - {key: "x11forwarding", expected: "{{ ssh_hardening_x11_forwarding }}"}
+  - {key: "allowagentforwarding", expected: "{{ ssh_hardening_allow_agent_forwarding }}"}
+  - {key: "allowtcpforwarding", expected: "{{ ssh_hardening_allow_tcp_forwarding }}"}
+
+ssh_hardening_baseline_fields_numeric:
+  - {key: "maxauthtries", max: "{{ ssh_hardening_max_auth_tries_max }}"}
+  - {key: "logingracetime", max_seconds: "{{ ssh_hardening_login_grace_time_max_seconds }}"}

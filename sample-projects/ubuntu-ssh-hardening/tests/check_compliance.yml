@@ -1,0 +1,39 @@
+---
+# tests/check_compliance.yml
+#
+# Offline: roles/ssh_hardening/tasks/compliance_assert.yml mantığını
+# sahte (fixture) bir `sshd -T` çıktısıyla çalıştırır. Gerçek bir SSH
+# hostu, bağlantı veya sudo gerektirmez. fixture_path extra-var'ı
+# zorunludur. compliance_assert.yml artık PARAMETRELİDİR (apply.yml hem
+# pre-reload hem post-reload aşamasında aynı dosyayı çağırır); bu harness
+# stage_label'ı "test" olarak sabitler ve compliance_assert.yml'in ARTIK
+# hard-fail ETMEDİĞİNİ (yalnız ssh_hardening_compliance_failed set_fact
+# ürettiğini) hesaba katarak sonucu KENDİSİ bir `fail` task'ıyla dışa
+# vurur -- gerçek apply.yml/post_verify.yml'nin yaptığı gibi.
+
+- name: SSH Hardening offline compliance harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/ssh_hardening/defaults/main.yml
+  vars:
+    ssh_hardening_compliance_raw_stdout: "{{ lookup('file', fixture_path) }}"
+    ssh_hardening_compliance_source:
+      stdout: "{{ ssh_hardening_compliance_raw_stdout }}"
+      stdout_lines: "{{ ssh_hardening_compliance_raw_stdout.split('\n') }}"
+    ssh_hardening_compliance_stage_label: "test"
+  tasks:
+    - name: fixture_path zorunludur
+      ansible.builtin.assert:
+        that:
+          - fixture_path is defined
+        fail_msg: "-e fixture_path=<path> ile bir sshd -T fixture dosyası verilmeli."
+
+    - name: Compliance assert mantığını fixture üzerinde çalıştır (soft-fail)
+      ansible.builtin.import_tasks: ../roles/ssh_hardening/tasks/compliance_assert.yml
+
+    - name: "Sonucu dışa vur (compliance_assert.yml artık kendisi hard-fail etmez)"
+      ansible.builtin.fail:
+        msg: "NON-COMPLIANT (test): bir veya daha fazla alan beklenen değerden sapmış; ayrıntı için yukarıdaki alan bazlı sonuçlara bakın."
+      when: ssh_hardening_compliance_failed | default(false)

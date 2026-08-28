@@ -1,0 +1,209 @@
+---
+# roles/ssh_hardening/tasks/apply.yml
+#
+# FAILURE-ATOMIC güvenli uygulama sırası (bkz. README.md → "Güvenli
+# uygulama sırası"). "Failure-atomic" burada şunu garanti eder: adayın
+# `sshd -t` (syntax), pre-reload `sshd -T` OKUMA komutunun kendisi
+# (effective-read) VEYA pre-reload `sshd -T` (effective baseline)
+# doğrulamalarından HERHANGİ BİRİ başarısız olursa, bu dosyadaki HİÇBİR
+# task Ansible'ın kendi task-failure mekanizmasıyla play'i erken KESMEZ --
+# HER ÜÇ komut da `failed_when: false` taşır (veya soft-fail eden
+# compliance_assert.yml), sonuç bir set_fact'e NORMALLEŞTİRİLİR
+# (apply_decisions_*.yml) ve rollback/fail kararı bu normalize edilmiş
+# bayraklara göre BİZİM `when:` koşullarımızla verilir. Böylece rollback
+# task'larına HER ZAMAN ulaşılır (BULGU1/FIX1.1); Ansible'ın "task
+# başarısız oldu, oynatım dur" davranışı bu akışın dışına hiç çıkmaz.
+#
+#   3.  Yeni drop-in'i root sahipliği ve sıkı izinle yerleştir (backup ile).
+#   4a. Aday'ı `sshd -t` ile doğrula (syntax).
+#   4b. Yalnız 4a başarılıysa: `sshd -T` ile aday'ın effective config'ini
+#       OKU (bu okuma komutunun kendisi de ayrıca başarısız olabilir --
+#       "effective-read" -- ve bu, "değerler uyuşmuyor" ile AYNI şey
+#       değildir).
+#   4c. Yalnız 4b'nin OKUMASI başarılıysa: okunan effective değerlerin
+#       baseline'a tam uyup uymadığını doğrula (BULGU2:
+#       precedence/beklenmeyen değer kontrolü, reload'dan ÖNCE, DİSKTEKİ
+#       config üzerinden -- sözlüksel olarak daha erken sıralanan başka
+#       bir drop-in dosyası varsa burada yakalanır, reload hiç
+#       denenmeden).
+#   5.  4a, 4b VEYA 4c başarısızsa: eski dosyayı geri getir (backup varsa)
+#       veya yeni dosyayı kaldır (yoksa); ardından aktif dosya yapısını
+#       TEKRAR `sshd -t` ile doğrula (rollback'in kendisi de doğrulanır);
+#       reload YAPMADAN, asıl hata ile rollback sonucunu DÜRÜSTÇE
+#       ayrıştıran bir mesajla fail et. "Rollback yapıldı" ancak bu
+#       ikinci doğrulama da geçerse iddia edilir.
+#   6.  Yalnız 4a, 4b VE 4c başarılıysa VE içerik gerçekten değiştiyse
+#       doğru SSH servisini reload et (idempotency: değişiklik yoksa
+#       reload da yok).
+#
+# check mode: `template` modülü check mode'da hedef dosyayı YAZMAZ (yalnız
+# would-be diff üretir). Bu dosyadaki hiçbir command/copy/file/systemd
+# task'ı `check_mode: false` taşımaz; dahası her biri ayrıca açıkça
+# `not ansible_check_mode` ile korunur.
+#
+# Yalnız DORAnsible'a ait TEK bir sshd_config.d drop-in dosyası buradan
+# yazılır/okunur/geri yüklenir; ana sshd_config veya başka bir drop-in
+# dosyası bu task'lar tarafından asla değiştirilmez.
+
+- name: "SSH Hardening | Yönetilen drop-in yolunu kaydet"
+  ansible.builtin.set_fact:
+    ssh_hardening_managed_path: "{{ ssh_hardening_managed_drop_in_path }}"
+
+- name: "SSH Hardening | Yönetilen drop-in'i yerleştir (değişirse otomatik backup ile)"
+  ansible.builtin.template:
+    src: managed-drop-in.conf.j2
+    dest: "{{ ssh_hardening_managed_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  become: true
+  register: ssh_hardening_apply
+
+# Not: Ansible'ın backup dosya adı ("<dosya>.<pid>.<zaman damgası>~")
+# ".conf" ile bitmez; bu yüzden Ubuntu'nun "Include .../*.conf" glob'una
+# hiçbir zaman dahil olmaz ve sshd tarafından yanlışlıkla canlı yapılandırma
+# olarak okunmaz.
+
+- name: "SSH Hardening | Aday drop-in'i syntax olarak doğrula (sshd -t)"
+  # failed_when: false -> BULGU1 düzeltmesi: nonzero rc bu task'ı
+  # BAŞARISIZ SAYMAZ (aksi hâlde Ansible play'i burada keserdi ve
+  # aşağıdaki rollback task'larına HİÇ ulaşılamazdı). Sonuç yalnızca
+  # register edilir; başarı/başarısızlık kararını
+  # apply_decisions_pre.yml'deki set_fact verir.
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -t
+  become: true
+  changed_when: false
+  failed_when: false
+  register: ssh_hardening_candidate_verify
+  when: not ansible_check_mode
+
+- name: "SSH Hardening | Apply ve aday syntax sonuçlarını normalize et"
+  ansible.builtin.import_tasks: apply_decisions_pre.yml
+
+- name: "SSH Hardening | Aday syntax GEÇERLİYSE: effective baseline'ı reload'dan ÖNCE doğrula (sshd -T)"
+  # BULGU2: precedence sorunları (ör. sözlüksel olarak daha erken sıralanan
+  # başka bir sshd_config.d dosyası) veya beklenmeyen bir effective değer,
+  # servis HİÇ reload edilmeden, yalnızca DİSKTEKİ dosyalar okunarak burada
+  # yakalanır -- `sshd -t`/`sshd -T` her ikisi de ÇALIŞAN daemon'ın
+  # belleğini SORGULAMAZ: ikisi de kendi başına yeni bir `sshd` süreci
+  # olarak disk üzerindeki config zincirini o an yeniden PARSE eder.
+  #
+  # failed_when: false -> FIX1.1 düzeltmesi: bu OKUMA komutunun kendisi de
+  # nonzero rc ile dönebilir (ör. sshd -t geçmesine rağmen -T farklı bir
+  # nedenle başarısız olursa); `failed_when` olmadan bu, Ansible'ı play'i
+  # burada keserdi ve rollback task'larına hiç ulaşılamazdı (aynı BULGU1
+  # gerekçesi, bu kez syntax değil effective-okuma adımı için). Sonuç
+  # yalnızca register edilir; başarı/başarısızlık kararını
+  # apply_decisions_pre_reload_read.yml'deki set_fact verir.
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -T
+  become: true
+  changed_when: false
+  failed_when: false
+  register: ssh_hardening_pre_reload_sshd_t
+  when:
+    - not ansible_check_mode
+    - not ssh_hardening_candidate_verify_failed
+
+- name: "SSH Hardening | Pre-reload sshd -T okuma sonucunu normalize et"
+  ansible.builtin.import_tasks: apply_decisions_pre_reload_read.yml
+
+- name: "SSH Hardening | Pre-reload OKUMA da GEÇERLİYSE: effective değerleri baseline'a karşı değerlendir (soft-fail)"
+  ansible.builtin.import_tasks: compliance_assert.yml
+  vars:
+    ssh_hardening_compliance_source: "{{ ssh_hardening_pre_reload_sshd_t }}"
+    ssh_hardening_compliance_stage_label: "pre-reload"
+  when:
+    - not ansible_check_mode
+    - not ssh_hardening_candidate_verify_failed
+    - not ssh_hardening_pre_reload_read_failed
+
+- name: "SSH Hardening | Aday geçerliliğini birleştir (syntax + effective-read + effective-baseline)"
+  ansible.builtin.import_tasks: apply_decisions_combine.yml
+
+# --- Rollback (yalnız aday BAŞARISIZSA; check mode'da hiçbiri çalışmaz) ---
+
+- name: "SSH Hardening | Aday BAŞARISIZ: önceki içeriği geri yükle (backup varsa)"
+  ansible.builtin.copy:
+    src: "{{ ssh_hardening_backup_path }}"
+    dest: "{{ ssh_hardening_managed_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when:
+    - not ansible_check_mode
+    - ssh_hardening_candidate_failed
+    - ssh_hardening_had_backup
+
+- name: "SSH Hardening | Aday BAŞARISIZ ve önceki dosya yoktu: yeni dosyayı kaldır"
+  ansible.builtin.file:
+    path: "{{ ssh_hardening_managed_path }}"
+    state: absent
+  become: true
+  when:
+    - not ansible_check_mode
+    - ssh_hardening_candidate_failed
+    - not ssh_hardening_had_backup
+
+- name: "SSH Hardening | Rollback SONRASI aktif yapılandırmayı TEKRAR doğrula (sshd -t)"
+  # BULGU1: "rollback yapıldı" iddiası ancak bu doğrulama da geçerse
+  # kurulabilir. failed_when: false -> aynı gerekçeyle (yukarıdaki aday
+  # doğrulaması) burada da nonzero rc play'i KESMEZ; sonuç normalize
+  # edilip fail mesajında dürüstçe raporlanır.
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -t
+  become: true
+  changed_when: false
+  failed_when: false
+  register: ssh_hardening_rollback_verify
+  when:
+    - not ansible_check_mode
+    - ssh_hardening_candidate_failed
+
+- name: "SSH Hardening | Rollback doğrulama sonucunu normalize et"
+  ansible.builtin.import_tasks: apply_decisions_rollback.yml
+  when:
+    - not ansible_check_mode
+    - ssh_hardening_candidate_failed
+
+- name: "SSH Hardening | Aday BAŞARISIZ: reload YAPILMADAN dur"
+  ansible.builtin.fail:
+    msg: >-
+      NON-COMPLIANT/FAIL-CLOSED ({{ ssh_hardening_candidate_failure_reason }}):
+      aday drop-in doğrulaması başarısız oldu --
+      {{ ('sshd -t (syntax) rc=' ~ (ssh_hardening_candidate_verify.rc | default('bilinmiyor')) ~ ', stderr: ' ~ (ssh_hardening_candidate_verify.stderr | default(''))) if ssh_hardening_candidate_failure_reason == 'syntax'
+         else (('sshd -T (effective OKUMA) rc=' ~ (ssh_hardening_pre_reload_sshd_t.rc | default('bilinmiyor')) ~ ', stderr: ' ~ (ssh_hardening_pre_reload_sshd_t.stderr | default('')) ~ ' -- okuma komutunun kendisi başarısız oldu, effective değerler hiç değerlendirilemedi') if ssh_hardening_candidate_failure_reason == 'effective-read'
+         else 'sshd -T effective değerleri reload ÖNCESİ beklenen baseline ile eşleşmedi (ayrıntı için yukarıdaki pre-reload alan bazlı sonuçlara bakın; olası neden: sözlüksel olarak daha erken sıralanan başka bir sshd_config.d dosyası -- bkz. README.md "Drop-in precedence kararı")') }}.
+      {{ ('Rollback DOĞRULANDI: ' ~ ('önceki drop-in içeriği geri yüklendi (' ~ ssh_hardening_backup_path ~ ')' if ssh_hardening_had_backup else 'daha önce yönetilen bir drop-in yoktu, yeni yazılan dosya kaldırıldı') ~ ' ve aktif yapılandırma sshd -t ile YENİDEN doğrulandı (geçerli).')
+         if not (ssh_hardening_rollback_verify_failed | default(false))
+         else ('KRİTİK: ROLLBACK SONRASI aktif yapılandırma HÂLÂ sshd -t doğrulamasından geçmiyor (rc=' ~ (ssh_hardening_rollback_verify.rc | default('bilinmiyor')) ~ ', stderr: ' ~ (ssh_hardening_rollback_verify.stderr | default('')) ~ '). \"Rollback tamamlandı\" iddia EDİLEMEZ -- hedefi elle inceleyin, otomatik onarım denenmedi.') }}
+      SSH servisi RELOAD EDİLMEDİ.
+  when:
+    - not ansible_check_mode
+    - ssh_hardening_candidate_failed
+
+- name: "SSH Hardening | Doğru SSH servisini reload et (yalnız her iki doğrulama da başarılı VE içerik değiştiyse)"
+  # Ubuntu'da openssh-server paketinin systemd birim adı "ssh.service"dir
+  # (Alias=sshd.service ile eşleşir; bkz. README.md "Drop-in precedence
+  # kararı"). ExecReload zaten "/usr/sbin/sshd -t" + "kill -HUP" çalıştırır
+  # -- yani systemd de reload öncesi kendi doğrulamasını ayrıca yapar;
+  # burada yaptığımız iki doğrulama (syntax + effective baseline) buna ek
+  # bir savunma katmanıdır, yerine geçmez.
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: reloaded
+  become: true
+  when:
+    - not ansible_check_mode
+    - not ssh_hardening_candidate_failed
+    - ssh_hardening_apply_changed

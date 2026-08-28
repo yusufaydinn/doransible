@@ -1,0 +1,12 @@
+---
+# roles/ssh_hardening/tasks/apply_decisions_rollback.yml
+#
+# SAF karar mantığı: rollback SONRASI tekrarlanan `sshd -t`
+# (ssh_hardening_rollback_verify) sonucunu normalize eder. BULGU1: "Rollback
+# yapıldı" iddiası ancak bu bayrak false'sa (yani rollback sonrası aktif
+# yapılandırma da geçerliyse) kurulabilir; apply.yml'deki fail mesajı bunu
+# ssh_hardening_rollback_verify_failed üzerinden dürüstçe ayrıştırır.
+
+- name: "SSH Hardening | Rollback sonrası doğrulamayı normalize et (check-mode/skip güvenli)"
+  ansible.builtin.set_fact:
+    ssh_hardening_rollback_verify_failed: "{{ (ssh_hardening_rollback_verify.rc | default(0)) | int != 0 }}"

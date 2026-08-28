@@ -1,0 +1,336 @@
+---
+# roles/ssh_audit/tasks/checks.yml
+#
+# ssh_audit_sshd_t.stdout / .stdout_lines içindeki GLOBAL/DEFAULT sshd
+# yapılandırmasını değerlendiren, host'a bağlı olmayan saf mantık. main.yml
+# bunu gerçek bir `sshd -T` (bağlantı bağlamı olmadan, `-C` verilmeden)
+# sonrasında çağırır; offline regresyon testleri (../../../tests) aynı
+# sonucu sahte (fixture) sshd -T çıktısıyla, gerçek host veya sudo
+# gerektirmeden üretmek için bu dosyayı doğrudan import eder.
+#
+# Kapsam sınırı: `-C` olmadan `sshd -T` yalnız global/default baseline'ı
+# döndürür; `Match User`/`Match Group`/`Match Address`/`Match LocalAddress`
+# gibi koşullu blokların olası geçersiz kılmaları bu değerlendirmeye hiç
+# YANSIMAZ. Bu dosyadaki COMPLIANT sonucu yalnız o baseline içindir (bkz.
+# README.md "Sınırlar"); bu dilimde context sistemi veya sshd_config
+# taraması yoktur.
+#
+# Fail-closed sözleşmesi iki farklı alan türü için ayrıdır:
+#   - Scalar alanlar (PermitRootLogin, PasswordAuthentication, ...,
+#     MaxAuthTries, LoginGraceTime): sshd -T'de her zaman **tam olarak bir
+#     satır** üretirler. Alan eksikse, birden fazla kez görülmüşse
+#     (duplicate) veya beklenmeyen/boş bir değer taşıyorsa kontrol
+#     NON-COMPLIANT sayılır.
+#   - Liste alanları (AllowUsers/AllowGroups/DenyUsers/DenyGroups): 0..N
+#     satır üretebilirler (her eleman kendi satırında). 0 satır geçerli
+#     "liste boş" durumudur; N>1 satır duplicate değildir, toplanır.
+#     Yalnız keyword'ü olup değeri olmayan bozuk bir satır fail-closed'dır.
+# Hiçbir durumda boş/ayrıştırılamayan bir değer sessizce compliant kabul
+# edilmez.
+
+- name: "SSH Audit | Root SSH girişi kapalı mı"
+  vars:
+    ssh_audit_field_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^permitrootlogin(\\s|$)') | list }}"
+    ssh_audit_field_line: "{{ (ssh_audit_field_lines + ['permitrootlogin unset'])[0] }}"
+    ssh_audit_field_value: "{{ (ssh_audit_field_line.split(None, 1) + [''])[1] }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_field_lines | length == 1
+      - ssh_audit_field_value in ssh_audit_permit_root_login_allowed
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: permitrootlogin sshd -T çıktısında
+      {{ ssh_audit_field_lines | length }} kez görüldü (1 bekleniyor), değer='{{ ssh_audit_field_value }}',
+      izin verilen değerler: {{ ssh_audit_permit_root_login_allowed }}.
+    success_msg: "COMPLIANT: PermitRootLogin={{ ssh_audit_field_value }}."
+  ignore_errors: true
+  register: ssh_audit_check_root_login
+
+- name: "SSH Audit | Parola ile kimlik doğrulama beklenen profile uygun mu"
+  vars:
+    ssh_audit_field_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^passwordauthentication(\\s|$)') | list }}"
+    ssh_audit_field_line: "{{ (ssh_audit_field_lines + ['passwordauthentication unset'])[0] }}"
+    ssh_audit_field_value: "{{ (ssh_audit_field_line.split(None, 1) + [''])[1] }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_field_lines | length == 1
+      - ssh_audit_field_value in ["yes", "no"]
+      - (ssh_audit_field_value == "yes") == ssh_audit_password_authentication_allowed
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: passwordauthentication sshd -T çıktısında
+      {{ ssh_audit_field_lines | length }} kez görüldü (1 bekleniyor), değer='{{ ssh_audit_field_value }}'
+      (yes/no bekleniyor), beklenen izin: {{ ssh_audit_password_authentication_allowed }}.
+    success_msg: "COMPLIANT: PasswordAuthentication={{ ssh_audit_field_value }}."
+  ignore_errors: true
+  register: ssh_audit_check_password_auth
+
+- name: "SSH Audit | Public-key kimlik doğrulama açık mı"
+  vars:
+    ssh_audit_field_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^pubkeyauthentication(\\s|$)') | list }}"
+    ssh_audit_field_line: "{{ (ssh_audit_field_lines + ['pubkeyauthentication unset'])[0] }}"
+    ssh_audit_field_value: "{{ (ssh_audit_field_line.split(None, 1) + [''])[1] }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_field_lines | length == 1
+      - ssh_audit_field_value in ["yes", "no"]
+      - (ssh_audit_field_value == "yes") == ssh_audit_pubkey_authentication_required
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: pubkeyauthentication sshd -T çıktısında
+      {{ ssh_audit_field_lines | length }} kez görüldü (1 bekleniyor), değer='{{ ssh_audit_field_value }}'
+      (yes/no bekleniyor), beklenen: {{ ssh_audit_pubkey_authentication_required }}.
+    success_msg: "COMPLIANT: PubkeyAuthentication={{ ssh_audit_field_value }}."
+  ignore_errors: true
+  register: ssh_audit_check_pubkey_auth
+
+- name: "SSH Audit | Boş parola ile girişe izin verilmiyor mu"
+  vars:
+    ssh_audit_field_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^permitemptypasswords(\\s|$)') | list }}"
+    ssh_audit_field_line: "{{ (ssh_audit_field_lines + ['permitemptypasswords unset'])[0] }}"
+    ssh_audit_field_value: "{{ (ssh_audit_field_line.split(None, 1) + [''])[1] }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_field_lines | length == 1
+      - ssh_audit_field_value in ["yes", "no"]
+      - (ssh_audit_field_value == "yes") == ssh_audit_permit_empty_passwords_allowed
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: permitemptypasswords sshd -T çıktısında
+      {{ ssh_audit_field_lines | length }} kez görüldü (1 bekleniyor), değer='{{ ssh_audit_field_value }}'
+      (yes/no bekleniyor), beklenen izin: {{ ssh_audit_permit_empty_passwords_allowed }}.
+    success_msg: "COMPLIANT: PermitEmptyPasswords={{ ssh_audit_field_value }}."
+  ignore_errors: true
+  register: ssh_audit_check_empty_passwords
+
+- name: "SSH Audit | Keyboard-interactive kimlik doğrulama profile uygun mu"
+  vars:
+    ssh_audit_field_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^kbdinteractiveauthentication(\\s|$)') | list }}"
+    ssh_audit_field_line: "{{ (ssh_audit_field_lines + ['kbdinteractiveauthentication unset'])[0] }}"
+    ssh_audit_field_value: "{{ (ssh_audit_field_line.split(None, 1) + [''])[1] }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_field_lines | length == 1
+      - ssh_audit_field_value in ["yes", "no"]
+      - (ssh_audit_field_value == "yes") == ssh_audit_kbd_interactive_authentication_allowed
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: kbdinteractiveauthentication sshd -T çıktısında
+      {{ ssh_audit_field_lines | length }} kez görüldü (1 bekleniyor), değer='{{ ssh_audit_field_value }}'
+      (yes/no bekleniyor), beklenen: {{ ssh_audit_kbd_interactive_authentication_allowed }}
+      (MFA/PAM kullanan profiller ssh_audit_kbd_interactive_authentication_allowed=true ayarlamalı).
+    success_msg: "COMPLIANT: KbdInteractiveAuthentication={{ ssh_audit_field_value }}."
+  ignore_errors: true
+  register: ssh_audit_check_kbd_interactive
+
+- name: "SSH Audit | X11 forwarding kapalı mı"
+  vars:
+    ssh_audit_field_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^x11forwarding(\\s|$)') | list }}"
+    ssh_audit_field_line: "{{ (ssh_audit_field_lines + ['x11forwarding unset'])[0] }}"
+    ssh_audit_field_value: "{{ (ssh_audit_field_line.split(None, 1) + [''])[1] }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_field_lines | length == 1
+      - ssh_audit_field_value in ["yes", "no"]
+      - (ssh_audit_field_value == "yes") == ssh_audit_x11_forwarding_allowed
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: x11forwarding sshd -T çıktısında
+      {{ ssh_audit_field_lines | length }} kez görüldü (1 bekleniyor), değer='{{ ssh_audit_field_value }}'
+      (yes/no bekleniyor), beklenen: {{ ssh_audit_x11_forwarding_allowed }}.
+    success_msg: "COMPLIANT: X11Forwarding={{ ssh_audit_field_value }}."
+  ignore_errors: true
+  register: ssh_audit_check_x11_forwarding
+
+- name: "SSH Audit | SSH agent forwarding kapalı mı"
+  vars:
+    ssh_audit_field_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^allowagentforwarding(\\s|$)') | list }}"
+    ssh_audit_field_line: "{{ (ssh_audit_field_lines + ['allowagentforwarding unset'])[0] }}"
+    ssh_audit_field_value: "{{ (ssh_audit_field_line.split(None, 1) + [''])[1] }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_field_lines | length == 1
+      - ssh_audit_field_value in ["yes", "no"]
+      - (ssh_audit_field_value == "yes") == ssh_audit_agent_forwarding_allowed
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: allowagentforwarding sshd -T çıktısında
+      {{ ssh_audit_field_lines | length }} kez görüldü (1 bekleniyor), değer='{{ ssh_audit_field_value }}'
+      (yes/no bekleniyor), beklenen: {{ ssh_audit_agent_forwarding_allowed }}.
+    success_msg: "COMPLIANT: AllowAgentForwarding={{ ssh_audit_field_value }}."
+  ignore_errors: true
+  register: ssh_audit_check_agent_forwarding
+
+- name: "SSH Audit | TCP forwarding profile bazlı beklentiye uygun mu"
+  # AllowTcpForwarding OpenSSH'ta boolean değildir: yes/all/no/local/remote
+  # değerlerini alabilir. "local" ve "remote" kısmi olarak açıktır ve
+  # varsayılan "kapalı" profilde compliant sayılmaz; yalnız
+  # ssh_audit_tcp_forwarding_allowed_values listesine açıkça eklenirse
+  # (örn. bastion/jump-host profilinde) kabul edilir.
+  vars:
+    ssh_audit_field_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^allowtcpforwarding(\\s|$)') | list }}"
+    ssh_audit_field_line: "{{ (ssh_audit_field_lines + ['allowtcpforwarding unset'])[0] }}"
+    ssh_audit_field_value: "{{ (ssh_audit_field_line.split(None, 1) + [''])[1] }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_field_lines | length == 1
+      - ssh_audit_field_value in ssh_audit_tcp_forwarding_allowed_values
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: allowtcpforwarding sshd -T çıktısında
+      {{ ssh_audit_field_lines | length }} kez görüldü (1 bekleniyor), değer='{{ ssh_audit_field_value }}',
+      izin verilen değerler: {{ ssh_audit_tcp_forwarding_allowed_values }}
+      (bastion/jump-host profilleri listeye "local" veya "remote" ekleyebilir).
+    success_msg: "COMPLIANT: AllowTcpForwarding={{ ssh_audit_field_value }}."
+  ignore_errors: true
+  register: ssh_audit_check_tcp_forwarding
+
+- name: "SSH Audit | MaxAuthTries geçerli ve üst sınırın altında mı"
+  vars:
+    ssh_audit_field_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^maxauthtries(\\s|$)') | list }}"
+    ssh_audit_field_line: "{{ (ssh_audit_field_lines + ['maxauthtries unset'])[0] }}"
+    ssh_audit_field_value: "{{ (ssh_audit_field_line.split(None, 1) + [''])[1] }}"
+    ssh_audit_field_numeric: "{{ ssh_audit_field_value is match('^[0-9]+$') }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_field_lines | length == 1
+      - ssh_audit_field_numeric
+      - ssh_audit_field_value | int >= 1
+      - ssh_audit_field_value | int <= ssh_audit_max_auth_tries_max | int
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: maxauthtries sshd -T çıktısında
+      {{ ssh_audit_field_lines | length }} kez görüldü (1 bekleniyor), değer='{{ ssh_audit_field_value }}'
+      (1..{{ ssh_audit_max_auth_tries_max }} arası pozitif tam sayı bekleniyor; 0 veya
+      eksik/geçersiz değer kabul edilmez).
+    success_msg: "COMPLIANT: MaxAuthTries={{ ssh_audit_field_value }}."
+  ignore_errors: true
+  register: ssh_audit_check_max_auth_tries
+
+- name: "SSH Audit | LoginGraceTime geçerli, sınırsız değil ve üst sınırın altında mı"
+  # sshd -T LoginGraceTime'ı normalde saniye tam sayısı olarak yazar; bazı
+  # araçlar/sürümler "10m", "1h", "3w" gibi tek birimli sshd_config zaman
+  # biçimlerini de üretebilir. Bu task saniye ve desteklenen tek birimli
+  # (s/m/h/d/w) biçimleri saniyeye çevirir. Bileşik biçimler (örn. "1h30m")
+  # ve tanınmayan biçimler ayrıştırılamaz sayılır ve fail-closed geçersiz
+  # kabul edilir. 0 (sınırsız bekleme süresi) her zaman NON-COMPLIANT'tır.
+  vars:
+    ssh_audit_field_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^logingracetime(\\s|$)') | list }}"
+    ssh_audit_field_line: "{{ (ssh_audit_field_lines + ['logingracetime unset'])[0] }}"
+    ssh_audit_field_value: "{{ (ssh_audit_field_line.split(None, 1) + [''])[1] }}"
+    # Not: regex_search'ün grup/index sonucuna (`match[0]`, `match[1]`)
+    # ASLA erişilmez — eşleşme yoksa None döner ve indexlemek ortama göre
+    # değişen bir hataya yol açar ("... object has no element 1"). Bunun
+    # yerine yalnız boolean `is match` testi ve güvenli string slicing
+    # (`[-1:]`, `[:-1]`, boş dizide bile ASLA istisna atmaz) kullanılır.
+    ssh_audit_field_valid_format: "{{ ssh_audit_field_value is match('^[0-9]+[a-zA-Z]?$') }}"
+    ssh_audit_field_has_unit_suffix: "{{ ssh_audit_field_valid_format and (ssh_audit_field_value[-1:] is match('^[a-zA-Z]$')) }}"
+    ssh_audit_field_unit: "{{ (ssh_audit_field_value[-1:] | lower) if ssh_audit_field_has_unit_suffix else '' }}"
+    ssh_audit_field_number: "{{ ((ssh_audit_field_value[:-1] if ssh_audit_field_has_unit_suffix else ssh_audit_field_value) | int) if ssh_audit_field_valid_format else 0 }}"
+    ssh_audit_field_unit_multiplier: >-
+      {{ 1 if ssh_audit_field_unit in ['', 's'] else
+         60 if ssh_audit_field_unit == 'm' else
+         3600 if ssh_audit_field_unit == 'h' else
+         86400 if ssh_audit_field_unit == 'd' else
+         604800 if ssh_audit_field_unit == 'w' else
+         -1 }}
+    ssh_audit_field_seconds: >-
+      {{ ((ssh_audit_field_number | int) * (ssh_audit_field_unit_multiplier | int))
+         if (ssh_audit_field_valid_format and (ssh_audit_field_unit_multiplier | int) >= 0)
+         else -1 }}
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_field_lines | length == 1
+      - ssh_audit_field_valid_format
+      - ssh_audit_field_unit_multiplier | int >= 0
+      - ssh_audit_field_seconds | int > 0
+      - ssh_audit_field_seconds | int <= ssh_audit_login_grace_time_max_seconds | int
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: logingracetime sshd -T çıktısında
+      {{ ssh_audit_field_lines | length }} kez görüldü (1 bekleniyor), ham değer='{{ ssh_audit_field_value }}',
+      hesaplanan={{ 'ayrıştırılamadı' if ssh_audit_field_seconds | int < 0 else (ssh_audit_field_seconds ~ 's') }},
+      üst sınır={{ ssh_audit_login_grace_time_max_seconds }}s (0 sınırsızdır ve kabul edilmez).
+    success_msg: "COMPLIANT: LoginGraceTime={{ ssh_audit_field_value }} (~{{ ssh_audit_field_seconds }}s)."
+  ignore_errors: true
+  register: ssh_audit_check_login_grace_time
+
+- name: "SSH Audit | Kullanıcı/grup erişim kısıtları (bilgi amaçlı veya profil karşılaştırması)"
+  # AllowUsers/AllowGroups/DenyUsers/DenyGroups scalar alanlar DEĞİLDİR:
+  # OpenSSH bu dört liste directive'inin her elemanını sshd -T çıktısında
+  # KENDİ satırında yazar (`dump_cfg_strarray`). Bu yüzden:
+  #   - 0 satır  -> geçerli "liste boş" durumu, fail-closed hata DEĞİLDİR.
+  #   - N>1 satır -> duplicate değil; tüm satırların değerleri toplanır.
+  #   - Keyword'ü olup değeri olmayan (boş) bir satır bozuktur ve
+  #     fail-closed'dır (sshd -T'nin asla üretmediği, ayrıştırılamaz bir
+  #     biçim).
+  # Beklenen profil listesi boşsa toplanan değer yalnız raporlanır ve
+  # compliant sayılır: erişim kısıtlaması isteğe bağlıdır (görev tanımı).
+  # Beklenen liste doldurulursa toplanan değerlerle deterministik (sort
+  # edilmiş) karşılaştırılır.
+  vars:
+    ssh_audit_allow_users_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^allowusers(\\s|$)') | list }}"
+    ssh_audit_allow_groups_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^allowgroups(\\s|$)') | list }}"
+    ssh_audit_deny_users_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^denyusers(\\s|$)') | list }}"
+    ssh_audit_deny_groups_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^denygroups(\\s|$)') | list }}"
+    ssh_audit_allow_users_tokens: "{{ ssh_audit_allow_users_lines | map('regex_replace', '^allowusers[ \\t]*', '') | map('split') | list }}"
+    ssh_audit_allow_groups_tokens: "{{ ssh_audit_allow_groups_lines | map('regex_replace', '^allowgroups[ \\t]*', '') | map('split') | list }}"
+    ssh_audit_deny_users_tokens: "{{ ssh_audit_deny_users_lines | map('regex_replace', '^denyusers[ \\t]*', '') | map('split') | list }}"
+    ssh_audit_deny_groups_tokens: "{{ ssh_audit_deny_groups_lines | map('regex_replace', '^denygroups[ \\t]*', '') | map('split') | list }}"
+    ssh_audit_allow_users_malformed: "{{ ssh_audit_allow_users_tokens | select('equalto', []) | list | length }}"
+    ssh_audit_allow_groups_malformed: "{{ ssh_audit_allow_groups_tokens | select('equalto', []) | list | length }}"
+    ssh_audit_deny_users_malformed: "{{ ssh_audit_deny_users_tokens | select('equalto', []) | list | length }}"
+    ssh_audit_deny_groups_malformed: "{{ ssh_audit_deny_groups_tokens | select('equalto', []) | list | length }}"
+    ssh_audit_allow_users: "{{ ssh_audit_allow_users_tokens | flatten }}"
+    ssh_audit_allow_groups: "{{ ssh_audit_allow_groups_tokens | flatten }}"
+    ssh_audit_deny_users: "{{ ssh_audit_deny_users_tokens | flatten }}"
+    ssh_audit_deny_groups: "{{ ssh_audit_deny_groups_tokens | flatten }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_allow_users_malformed | int == 0
+      - ssh_audit_allow_groups_malformed | int == 0
+      - ssh_audit_deny_users_malformed | int == 0
+      - ssh_audit_deny_groups_malformed | int == 0
+      - (ssh_audit_expected_allow_users | length == 0) or (ssh_audit_allow_users | sort == ssh_audit_expected_allow_users | sort)
+      - (ssh_audit_expected_allow_groups | length == 0) or (ssh_audit_allow_groups | sort == ssh_audit_expected_allow_groups | sort)
+      - (ssh_audit_expected_deny_users | length == 0) or (ssh_audit_deny_users | sort == ssh_audit_expected_deny_users | sort)
+      - (ssh_audit_expected_deny_groups | length == 0) or (ssh_audit_deny_groups | sort == ssh_audit_expected_deny_groups | sort)
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED: bozuk (değersiz) satır sayıları
+      (allowusers={{ ssh_audit_allow_users_malformed }}, allowgroups={{ ssh_audit_allow_groups_malformed }},
+      denyusers={{ ssh_audit_deny_users_malformed }}, denygroups={{ ssh_audit_deny_groups_malformed }}, her biri
+      için 0 bekleniyor) veya toplanan liste beklenen profille eşleşmiyor.
+      AllowUsers={{ ssh_audit_allow_users }} (beklenen: {{ ssh_audit_expected_allow_users }})
+      AllowGroups={{ ssh_audit_allow_groups }} (beklenen: {{ ssh_audit_expected_allow_groups }})
+      DenyUsers={{ ssh_audit_deny_users }} (beklenen: {{ ssh_audit_expected_deny_users }})
+      DenyGroups={{ ssh_audit_deny_groups }} (beklenen: {{ ssh_audit_expected_deny_groups }}).
+    success_msg: >-
+      RAPOR: AllowUsers={{ ssh_audit_allow_users }} AllowGroups={{ ssh_audit_allow_groups }}
+      DenyUsers={{ ssh_audit_deny_users }} DenyGroups={{ ssh_audit_deny_groups }}.
+  ignore_errors: true
+  register: ssh_audit_check_user_group_restrictions
+
+- name: "SSH Audit | Cipher/MAC/KEX mevcut durumu (bilgi amaçlı, zorunlu kılınmaz)"
+  vars:
+    ssh_audit_ciphers_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^ciphers(\\s|$)') | list }}"
+    ssh_audit_macs_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^macs(\\s|$)') | list }}"
+    ssh_audit_kex_lines: "{{ ssh_audit_sshd_t.stdout_lines | select('match', '^kexalgorithms(\\s|$)') | list }}"
+  ansible.builtin.debug:
+    msg:
+      - "Ciphers={{ ((ssh_audit_ciphers_lines + ['ciphers unset'])[0].split(None, 1) + [''])[1] if ssh_audit_ciphers_lines | length == 1 else '(alan ' ~ (ssh_audit_ciphers_lines | length) ~ ' kez görüldü, okunamadı)' }}"
+      - "MACs={{ ((ssh_audit_macs_lines + ['macs unset'])[0].split(None, 1) + [''])[1] if ssh_audit_macs_lines | length == 1 else '(alan ' ~ (ssh_audit_macs_lines | length) ~ ' kez görüldü, okunamadı)' }}"
+      - "KexAlgorithms={{ ((ssh_audit_kex_lines + ['kexalgorithms unset'])[0].split(None, 1) + [''])[1] if ssh_audit_kex_lines | length == 1 else '(alan ' ~ (ssh_audit_kex_lines | length) ~ ' kez görüldü, okunamadı)' }}"
+
+- name: "SSH Audit | Sonuç: uyumluluk özeti"
+  ansible.builtin.assert:
+    that:
+      - ssh_audit_check_root_login is succeeded
+      - ssh_audit_check_password_auth is succeeded
+      - ssh_audit_check_pubkey_auth is succeeded
+      - ssh_audit_check_empty_passwords is succeeded
+      - ssh_audit_check_kbd_interactive is succeeded
+      - ssh_audit_check_x11_forwarding is succeeded
+      - ssh_audit_check_agent_forwarding is succeeded
+      - ssh_audit_check_tcp_forwarding is succeeded
+      - ssh_audit_check_max_auth_tries is succeeded
+      - ssh_audit_check_login_grace_time is succeeded
+      - ssh_audit_check_user_group_restrictions is succeeded
+    fail_msg: >-
+      NON-COMPLIANT: bir veya daha fazla SSH kontrolü uygunsuz. Ayrıntı için
+      yukarıdaki kontrol task'larına bakın.
+    success_msg: >-
+      COMPLIANT (yalnızca global/default sshd baseline): tüm kontroller
+      beklenen profille uyumlu. sshd -T bağlantı bağlamı (`-C`) olmadan
+      çalıştı; `Match User`/`Match Group`/`Match Address`/`Match
+      LocalAddress` gibi koşullu bloklar DEĞERLENDİRİLMEDİ ve bu sonuca
+      dahil DEĞİLDİR — bkz. README.md "Sınırlar".

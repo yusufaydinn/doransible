@@ -1,0 +1,20 @@
+---
+# tests/check_os_gate.yml
+#
+# Offline: roles/ufw_hardening/tasks/os_check.yml mantığını sahte
+# (fake_distribution/fake_distribution_version) ansible_facts ile
+# çalıştırır. Gerçek bir host, bağlantı veya sudo gerektirmez.
+
+- name: UFW Hardening offline OS-gate harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/ufw_hardening/defaults/main.yml
+  vars:
+    ansible_facts:
+      distribution: "{{ fake_distribution | default('Ubuntu') }}"
+      distribution_version: "{{ fake_distribution_version | default('22.04') }}"
+  tasks:
+    - name: OS kontrolünü çalıştır
+      ansible.builtin.import_tasks: ../roles/ufw_hardening/tasks/os_check.yml

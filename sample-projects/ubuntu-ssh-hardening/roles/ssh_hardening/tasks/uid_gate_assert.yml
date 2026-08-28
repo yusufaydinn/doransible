@@ -1,0 +1,30 @@
+---
+# roles/ssh_hardening/tasks/uid_gate_assert.yml
+#
+# R1-V3H4-SIMPLIFY-AUDIT-FIX1: ortak, TEK KAYNAKLI UID=0 assert task'ı.
+# `system_checks.yml` (gerçek `id -u` çağrısından SONRA) VE offline test
+# harness'i (`tests/check_system_checks_gate.yml`, `become` gerektirmeyen
+# bir test-double komuttan SONRA) bu dosyayı `import_tasks` ile İTHAL
+# EDER -- assert koşulu VE fail_msg/success_msg metni yalnız BURADA
+# tanımlıdır, iki yerde AYRI AYRI YAZILMAZ (önceki round'da production
+# kodu ile test harness'i arasında kopyalanmış/senkron tutulması gereken
+# bir assert vardı -- bu artık mümkün değildir, tek kaynak buradadır).
+#
+# Bu dosya kendisi HİÇBİR KOMUT ÇALIŞTIRMAZ: register edilen
+# `ssh_hardening_uid_check` değişkeninin (ve onun `.stdout` alanının)
+# çağıran tarafından ÖNCEDEN doldurulmuş olmasını VARSAYAR -- gerçek
+# `id -u` çağrısı (system_checks.yml) veya bir test-double (offline
+# harness) fark etmez, bu dosya İKİSİ İÇİN DE AYNI kararı verir.
+
+- name: "SSH Hardening | Root/sudo doğrulaması başarılı mı (gerçek UID=0)"
+  ansible.builtin.assert:
+    that:
+      - (ssh_hardening_uid_check.stdout | trim) == "0"
+    fail_msg: >-
+      FAIL-CLOSED: become sonrası gerçek UID 0 değil
+      (uid='{{ ssh_hardening_uid_check.stdout | trim }}'). Hedef
+      kullanıcının ÖNCEDEN parolasız (NOPASSWD) sudo/root yetkisine sahip
+      olması gerekir -- DORAnsible bu yetkiyi VERMEZ, yalnız çalıştırmadan
+      ÖNCE var olup olmadığını doğrular. Bu adım başarısızsa apply.yml'deki
+      HİÇBİR task (dosya yazma, reload) çalışmaz.
+    success_msg: "Root/sudo doğrulandı (uid=0); apply.yml'e devam ediliyor."

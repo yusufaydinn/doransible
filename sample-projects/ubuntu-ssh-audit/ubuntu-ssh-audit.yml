@@ -1,0 +1,13 @@
+---
+# ubuntu-ssh-audit.yml
+#
+# Salt-okunur SSH audit playbook'u. Hiçbir dosya değiştirmez, paket kurmaz,
+# servis restart/reload etmez. Kapsam, sınırlar ve sudo gereksinimi için
+# README.md dosyasına bakın.
+
+- name: Ubuntu SSH Audit
+  hosts: all
+  gather_facts: true
+  become: false
+  roles:
+    - ssh_audit

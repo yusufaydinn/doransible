@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Secret ve runtime artifact'ler
+# ---------------------------------------------------------------------------
+# Uygulama çalışma verisi: veritabanı, job artifact'leri, staging, secret'lar
+app-data/
+
+# Environment dosyaları. Yalnızca *.example dosyaları commit edilir.
+.env
+.env.*
+!.env.example
+
+# Master key ve credential materyali
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+secrets/
+
+# Ansible çalışma çıktıları
+*.retry
+.ansible/
+artifacts/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv
+.venv/
+venv
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist
+dist/
+build/
+
+# ---------------------------------------------------------------------------
+# Node / frontend
+# ---------------------------------------------------------------------------
+node_modules
+node_modules/
+frontend/dist
+frontend/dist/
+.vite/
+npm-debug.log*
+yarn-error.log*
+
+# ---------------------------------------------------------------------------
+# Editör ve OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+*.swp
+.DS_Store
+Thumbs.db

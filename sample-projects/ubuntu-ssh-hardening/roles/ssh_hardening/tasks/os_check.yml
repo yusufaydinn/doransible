@@ -1,0 +1,19 @@
+---
+# roles/ssh_hardening/tasks/os_check.yml
+#
+# Host'a bağlı olmayan saf mantık (ansible_facts okur, hiçbir değişiklik
+# yapmaz). tests/check_os_gate.yml bu dosyayı sahte ansible_facts ile
+# doğrudan import ederek gerçek host olmadan test eder.
+
+- name: "SSH Hardening | Desteklenen Ubuntu sürümünü doğrula"
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == "Ubuntu"
+      - ansible_facts.distribution_version in ssh_hardening_supported_ubuntu_versions
+    fail_msg: >-
+      UNSUPPORTED: {{ ansible_facts.distribution | default('bilinmeyen dağıtım') }}
+      {{ ansible_facts.distribution_version | default('') }} desteklenmiyor. Bu
+      role yalnızca Ubuntu {{ ssh_hardening_supported_ubuntu_versions | join(', ') }}
+      için tasarlandı; hiçbir dosya yazılmadı, hiçbir servis reload edilmedi.
+    success_msg: >-
+      Desteklenen sürüm: Ubuntu {{ ansible_facts.distribution_version }}.

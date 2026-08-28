@@ -1,0 +1,65 @@
+---
+# roles/ufw_hardening/tasks/profile_lock_check.yml
+#
+# Bu dilimde güvenlik profili özelleştirilebilir DEĞİLDİR -- desteklenen
+# Ubuntu sürüm listesi, üç default policy değeri, logging seviyesi ve
+# reconnect timeout/sleep ayarları sabittir (ubuntu-ufw-audit'in
+# varsayılanlarıyla birebir aynı, IPv6 hariç -- bu dilimde IPV6
+# yönetilmez). defaults/main.yml'deki ufw_hardening_* değişkenleri
+# group_vars, host_vars veya (bu backend'de bugün mümkün olmasa da)
+# extra_vars ile TEORİK olarak override edilebileceği için, bu dosya
+# ONLARLA karşılaştırma yapmaz -- kendi İÇİNDE, hiçbir dış katmandan
+# etkilenmeyen SABİT (literal) beklenen değerlerle karşılaştırır
+# (ubuntu-ssh-hardening/roles/ssh_hardening/tasks/profile_lock_check.yml
+# ile BİREBİR aynı FIX1.1 gerekçesi: `vars:` altında tanımlanan bir isim
+# yine de bir Ansible değişken adıdır ve set_fact/registered/extra vars
+# task vars'tan DAHA YÜKSEK önceliğe sahiptir -- gölgelenebilir. Literal
+# gömülü değerlerin gölgelenecek bir adı yoktur).
+#
+# Bu kontrollerden HERHANGİ BİRİ sapma bulursa role, apply.yml'e hiç
+# ulaşmadan, HİÇBİR UFW YAZMA KOMUTU ÇALIŞTIRILMADAN fail-closed durur.
+#
+# tests/check_profile_lock.yml bu dosyayı gerçek bir hedef olmadan,
+# override edilmiş (bozulmuş) değişkenlerle doğrudan import ederek test
+# eder.
+
+- name: "UFW Hardening | Profil kilidi: desteklenen Ubuntu sürüm listesi sapmamış mı"
+  ansible.builtin.assert:
+    that:
+      - ufw_hardening_supported_ubuntu_versions == ["22.04", "24.04"]
+    fail_msg: >-
+      FAIL-CLOSED: ufw_hardening_supported_ubuntu_versions
+      ({{ ufw_hardening_supported_ubuntu_versions }}) beklenen sabit
+      listeden (["22.04", "24.04"]) sapmış. Bu dilimde desteklenen sürüm
+      listesi özelleştirilemez; hiçbir UFW yazma komutu çalıştırılmadı.
+    success_msg: "Desteklenen Ubuntu sürüm listesi sabit değerle eşleşiyor."
+
+- name: "UFW Hardening | Profil kilidi: üç default policy + logging seviyesi sapmamış mı"
+  ansible.builtin.assert:
+    that:
+      - (ufw_hardening_expected_default_input_policy | string) == "DROP"
+      - (ufw_hardening_expected_default_output_policy | string) == "ACCEPT"
+      - (ufw_hardening_expected_default_forward_policy | string) == "DROP"
+      - (ufw_hardening_logging_level | string) == "low"
+    fail_msg: >-
+      FAIL-CLOSED: bir veya daha fazla baseline değişkeni sabit audit
+      değerinden sapmış. Bu dilimde güvenlik profili özelleştirilemez;
+      hiçbir UFW yazma komutu çalıştırılmadı. Mevcut:
+      default_input_policy={{ ufw_hardening_expected_default_input_policy }},
+      default_output_policy={{ ufw_hardening_expected_default_output_policy }},
+      default_forward_policy={{ ufw_hardening_expected_default_forward_policy }},
+      logging_level={{ ufw_hardening_logging_level }}.
+    success_msg: "Üç default policy değeri ve logging seviyesi sabit audit değerleriyle eşleşiyor."
+
+- name: "UFW Hardening | Profil kilidi: reconnect timeout/sleep sabit ve güvenli mi"
+  ansible.builtin.assert:
+    that:
+      - (ufw_hardening_reconnect_timeout_seconds | int) == 30
+      - (ufw_hardening_reconnect_sleep_seconds | int) == 2
+    fail_msg: >-
+      FAIL-CLOSED: reconnect zaman aşımı ayarları
+      (timeout={{ ufw_hardening_reconnect_timeout_seconds }},
+      sleep={{ ufw_hardening_reconnect_sleep_seconds }}) beklenen sabit
+      değerlerden (timeout=30, sleep=2) sapmış. Bu dilimde bu ayarlar
+      özelleştirilemez; hiçbir UFW yazma komutu çalıştırılmadı.
+    success_msg: "Reconnect timeout/sleep sabit değerlerle eşleşiyor (30/2)."

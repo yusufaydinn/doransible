@@ -1,0 +1,32 @@
+---
+# roles/ssh_hardening/tasks/apply_decisions_combine.yml
+#
+# SAF karar mantığı: aday `sshd -t` (syntax), pre-reload `sshd -T` OKUMA
+# komutunun kendisi (effective-read) VE pre-reload `sshd -T` (effective
+# baseline, compliance_assert.yml'den gelen ssh_hardening_compliance_failed)
+# sonuçlarını TEK bir "aday başarısız mı" bayrağında birleştirir
+# (BULGU1/BULGU2 ve FIX1.1). Hiçbir gerçek komut çalıştırmaz; her zaman
+# (check mode dâhil) güvenle çalışacak biçimde `default()` ile
+# yazılmıştır -- apply.yml'de bu dosya check_mode koşulu OLMADAN import
+# edilir.
+#
+# Üç ayrı başarısızlık sınıfı, öncelik sırasıyla (ilk true olan kazanır):
+#   1. syntax             -> aday `sshd -t` nonzero rc döndü.
+#   2. effective-read      -> aday `sshd -t` geçti AMA pre-reload
+#                             `sshd -T` OKUMA komutunun KENDİSİ nonzero rc
+#                             döndü (stdout güvenilir değil, compliance
+#                             kontrolü hiç çalışmadı).
+#   3. effective-baseline   -> her iki komut da rc=0 döndü AMA effective
+#                             değerler beklenen baseline ile eşleşmedi.
+
+- name: "SSH Hardening | Aday geçerliliğini birleştir (syntax + effective-read + effective-baseline)"
+  ansible.builtin.set_fact:
+    ssh_hardening_candidate_failed: >-
+      {{ (ssh_hardening_candidate_verify_failed | default(false))
+         or (ssh_hardening_pre_reload_read_failed | default(false))
+         or (ssh_hardening_compliance_failed | default(false)) }}
+    ssh_hardening_candidate_failure_reason: >-
+      {{ 'syntax' if (ssh_hardening_candidate_verify_failed | default(false))
+         else ('effective-read' if (ssh_hardening_pre_reload_read_failed | default(false))
+         else ('effective-baseline' if (ssh_hardening_compliance_failed | default(false))
+         else '')) }}

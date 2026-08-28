@@ -1,0 +1,108 @@
+---
+# roles/ufw_audit/tasks/main.yml
+#
+# Salt-okunur UFW audit. Hiçbir task kural ekleyip kaldırmaz, `ufw enable`/
+# `disable` çalıştırmaz, servis restart/reload etmez, dosya yazmaz. Detaylar
+# için ../../../README.md.
+#
+# Fail-closed sözleşmesi: her bağımsız kontrol kendi alanının doğru
+# biçimde ve tam olarak bir kez göründüğünü doğrular; eksik, duplicate
+# veya ayrıştırılamayan bir değer hiçbir zaman sessizce compliant kabul
+# edilmez. Yalnızca desteklenmeyen Ubuntu sürümü tespiti (ilk task)
+# durdurucudur -- bunun dışındaki tüm kontroller (checks.yml)
+# `ignore_errors: true` ile ayrı ayrı çalışır; biri bozuk/uygunsuz olsa
+# bile diğerleri çalışmaya devam eder, sonda toplu bir özet task'ı genel
+# compliant/non-compliant sonucunu verir.
+
+- name: "UFW Audit | Desteklenen Ubuntu sürümünü doğrula"
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == "Ubuntu"
+      - ansible_facts.distribution_version in ufw_audit_supported_ubuntu_versions
+    fail_msg: >-
+      UNSUPPORTED: {{ ansible_facts.distribution | default('bilinmeyen dağıtım') }}
+      {{ ansible_facts.distribution_version | default('') }} desteklenmiyor. Bu
+      audit yalnızca Ubuntu {{ ufw_audit_supported_ubuntu_versions | join(', ') }}
+      için tasarlandı; sonraki kontroller çalıştırılmadı.
+    success_msg: >-
+      Desteklenen sürüm: Ubuntu {{ ansible_facts.distribution_version }}.
+
+- name: "UFW Audit | ufw binary durumu (stat, root gerektirmez)"
+  ansible.builtin.stat:
+    path: /usr/sbin/ufw
+  register: ufw_audit_binary_stat
+
+- name: "UFW Audit | Gerçek UFW durumunu oku (ufw status verbose)"
+  # become: true -> `ufw status` host key/kural dosyalarını okumak için
+  # root gerektirir. check_mode: false -> ssh_audit/ssh_hardening
+  # role'lerindeki aynı istisna gerekçesiyle (bkz. o role'lerin main.yml/
+  # system_checks.yml dosyaları): salt-okunur bu komut, check mode'un
+  # kendisi için de gereklidir. failed_when: false -> ufw kurulu değilse
+  # veya komut beklenmedik biçimde başarısız olsa bile play durmaz; sonuç
+  # checks.yml içindeki bağımsız kontrolde (rc dahil) değerlendirilir.
+  # LC_ALL=C -> çıktı biçimi locale'e bağlı olarak değişmesin (deterministik
+  # parse).
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/ufw
+      - status
+      - verbose
+  become: true
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  environment:
+    LC_ALL: C
+  register: ufw_audit_status_verbose
+
+- name: "UFW Audit | firewalld systemd durumu (çatışma kontrolü için, root gerektirmez)"
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - firewalld
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  environment:
+    LC_ALL: C
+  register: ufw_audit_firewalld_status
+
+- name: "UFW Audit | ufw.service systemd durumu (yalnız bilgi amaçlı, root gerektirmez)"
+  # Bu değer TEK BAŞINA "firewall active" kararı için KULLANILMAZ: gerçek
+  # active/inactive kararı yalnızca yukarıdaki `ufw status verbose`
+  # çıktısındaki 'Status:' satırından verilir (bkz. checks.yml). ufw.service
+  # active olsa bile `ufw status` inactive raporlarsa sonuç NON-COMPLIANT'tır
+  # -- bkz. README.md "Kontrol listesi".
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - ufw.service
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  environment:
+    LC_ALL: C
+  register: ufw_audit_ufw_service_status
+
+- name: "UFW Audit | /etc/default/ufw dosyasını oku"
+  # become: true -> dosya standart kurulumda root:root ve genelde dünya
+  # tarafından okunabilir olsa da (0644), sertleştirilmiş bir host'ta izin
+  # daraltılmış olabilir; salt-okunur bu okuma yine de root ile garanti
+  # altına alınır. failed_when: false -> dosya hiç yoksa play durmaz;
+  # aşağıdaki set_fact boş içerikle devam eder ve checks.yml'deki 4 alan
+  # kontrolü bunu "alan bulunamadı" olarak fail-closed değerlendirir.
+  ansible.builtin.slurp:
+    path: /etc/default/ufw
+  become: true
+  check_mode: false
+  failed_when: false
+  register: ufw_audit_default_ufw_slurp
+
+- name: "UFW Audit | /etc/default/ufw ham içeriğini çöz"
+  ansible.builtin.set_fact:
+    ufw_audit_default_ufw_raw: "{{ (ufw_audit_default_ufw_slurp.content | default('')) | b64decode }}"
+
+- name: "UFW Audit | Kontrolleri değerlendir"
+  ansible.builtin.import_tasks: checks.yml

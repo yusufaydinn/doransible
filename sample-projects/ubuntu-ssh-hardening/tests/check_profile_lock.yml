@@ -1,0 +1,18 @@
+---
+# tests/check_profile_lock.yml
+#
+# Offline: roles/ssh_hardening/tasks/profile_lock_check.yml SAF mantığını,
+# gerekirse override edilmiş (bozulmuş) ssh_hardening_* değişkenleriyle
+# çalıştırır. Gerçek host gerekmez. BULGU4: path/baseline/compliance-alan
+# listesi override edildiğinde role'ün İLK PERSISTENT ETKİDEN ÖNCE
+# fail-closed durduğunu kanıtlar.
+
+- name: SSH Hardening offline profile-lock harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/ssh_hardening/defaults/main.yml
+  tasks:
+    - name: Profil kilidi kontrolünü çalıştır
+      ansible.builtin.import_tasks: ../roles/ssh_hardening/tasks/profile_lock_check.yml

@@ -1,0 +1,8 @@
+Status: active
+Logging: off
+Default: allow (incoming), allow (outgoing), disabled (routed)
+New profiles: skip
+
+To                         Action      From
+--                         ------      ----
+80/tcp                     ALLOW IN    Anywhere

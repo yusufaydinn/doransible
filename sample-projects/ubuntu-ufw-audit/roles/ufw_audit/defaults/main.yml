@@ -1,0 +1,29 @@
+---
+# roles/ufw_audit/defaults/main.yml
+#
+# Bu değerler güvenli varsayılanlardır. Kayıtlı project/inventory üzerinden
+# group_vars veya host_vars ile override edilebilir. Amaç, bastion/özel
+# profil gerektiren ortamları körlemesine "uygunsuz" saymamaktır: bu
+# ihtiyaçları olan profiller ilgili değişkeni açıkça değiştirir ve audit
+# ona göre compliant/non-compliant kararı verir.
+
+ufw_audit_supported_ubuntu_versions:
+  - "22.04"
+  - "24.04"
+
+# /etc/default/ufw içindeki beklenen değerler. Dosya bu directive'leri
+# UYGULAMANIN varsayılan kurulumunda ürettiği tam biçimde (büyük/küçük harf
+# dahil) taşımalıdır; aksi hal fail-closed'dır (bkz. checks.yml).
+ufw_audit_expected_ipv6: "yes"
+ufw_audit_expected_default_input_policy: "DROP"
+ufw_audit_expected_default_output_policy: "ACCEPT"
+ufw_audit_expected_default_forward_policy: "DROP"
+
+# `ufw status verbose` çıktısındaki "Logging: on (<level>)" satırı için
+# kabul edilen seviyeler. "off" hiçbir zaman listede olamaz -- logging
+# kapalıysa kontrol her zaman NON-COMPLIANT'tır.
+ufw_audit_logging_allowed_levels:
+  - "low"
+  - "medium"
+  - "high"
+  - "full"

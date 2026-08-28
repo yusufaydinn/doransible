@@ -1,0 +1,80 @@
+---
+# roles/ufw_hardening/tasks/main.yml
+#
+# Ubuntu UFW remediation. ubuntu-ufw-audit'in denetlediği varsayılan
+# profili UYGULAR: SSH portu için TCP allow kuralı (enable'dan ÖNCE),
+# default incoming=deny/outgoing=allow/routed=deny, logging=low, UFW
+# enable. Kapsam, sınırlar, fail-closed sistem önkoşulları, lockout riski ve
+# check/normal mode farkı için ../../../README.md'ye bakın.
+#
+# GERÇEK KONTROL SIRASI (README.md'deki "Güvenli uygulama sırası" ile
+# BİREBİR aynı tutulur):
+#   0. Profil kilidi: desteklenen sürüm listesi, üç default policy,
+#      logging seviyesi VE reconnect timeout/sleep ayarları sabit audit
+#      değerlerinden sapmamış mı (profile_lock_check.yml).
+#   1. OS desteği (os_check.yml).
+#   2. Sistem ön-koşulları: passwordless sudo/root (İLK ve TEK privileged
+#      gate), ufw binary, firewalld fail-closed gate'i, inventory SSH
+#      portunun 1..65535 doğrulaması (system_checks.yml). Bu kontrollerden
+#      HERHANGİ BİRİ başarısızsa apply.yml'e hiç ulaşılmaz.
+#   3. Sıralı UFW yazma komutları + enable-sonrası yeniden doğrulama
+#      (apply.yml): SSH allow -> default incoming deny -> default
+#      outgoing allow -> default routed/forward deny -> logging low ->
+#      enable -> reverify (mevcut bağlantı üzerinden).
+#   4. Reload sonrası: bağlantı sıfırla, bounded `wait_for_connection` ile
+#      YENİ bağlantının kurulabildiğini kanıtla (post_verify.yml).
+#
+# ubuntu-ssh-hardening/roles/ssh_hardening/tasks/main.yml'deki
+# LIVE-AUDIT-FIX1 dersi BURADA DA BAŞTAN uygulanır: post_verify.yml,
+# `ansible.builtin.meta: reset_connection` içerdiği için `import_tasks`
+# (STATIC) DEĞİL, bilerek `include_tasks` (DYNAMIC) ile dahil edilir --
+# `meta: reset_connection` kendi üzerinde bir `when:` koşulunu
+# desteklemez; `include_tasks` seviyesindeki `when:` ÇALIŞMA ANINDA
+# değerlendirilir ve YANLIŞSA post_verify.yml'in İÇERİĞİ (dolayısıyla
+# `meta: reset_connection` task'ı) play'in task listesine HİÇ EKLENMEZ.
+#
+# `not ufw_hardening_apply_failed` gibi ayrı bir bayrağa GEREK YOKTUR:
+# apply.yml'deki hiçbir task `failed_when: false` TAŞIMAZ; bu yüzden
+# apply.yml'de HERHANGİ bir adım (ön-okuma, yazma komutu VEYA enable-sonrası
+# reverify) başarısız olursa Ansible'ın standart task-failure davranışı
+# play'i ORADA durdurur ve bu dosyadaki post_verify.yml include'una HİÇ
+# ULAŞILMAZ. DÜRÜST GERÇEK (BULGU1/AUDIT-FIX1): UFW komutları
+# `/etc/default/ufw`, `/etc/ufw/ufw.conf`, kural dosyalarını ve çalışan
+# netfilter durumunu DEĞİŞTİREBİLİR; role'ün backup/rollback mekanizması
+# yoktur, bu yüzden apply.yml'deki her yazma komutu KENDİ doğrulanmış
+# `would_*` kararı olmadan çalışmaz (bkz. apply.yml/apply_decisions.yml).
+#
+# BULGU1/AUDIT-FIX1: post_verify.yml -- dolayısıyla reset_connection +
+# wait_for_connection -- yalnız (a) normal modda VE (b) apply.yml'de
+# GERÇEKTEN en az bir değişiklik uygulandığında (`ufw_hardening_any_change`,
+# apply_decisions.yml'de altı would_* bayrağının OR birleşimi olarak
+# üretilir) çalışır. Tam uyumlu (idempotent) bir hedefte ikinci normal
+# çalıştırma hiçbir yazma komutu çalıştırmaz, dolayısıyla reconnect
+# testine de HİÇ GEREK YOKTUR -- bağlantı zaten hiç değişmemiştir.
+
+- name: "UFW Hardening | Profil kilidi kontrolü"
+  ansible.builtin.import_tasks: profile_lock_check.yml
+
+- name: "UFW Hardening | OS kontrolü"
+  ansible.builtin.import_tasks: os_check.yml
+
+- name: "UFW Hardening | Sistem ön-koşul kontrolleri (passwordless sudo/root, ufw binary, firewalld, SSH portu)"
+  ansible.builtin.import_tasks: system_checks.yml
+
+- name: "UFW Hardening | Sıralı UFW yazma komutları + enable-sonrası yeniden doğrulama"
+  ansible.builtin.import_tasks: apply.yml
+
+- name: "UFW Hardening | Reload sonrası bağlantı/lockout doğrulaması"
+  # include_tasks (DYNAMIC) -- bkz. yukarıdaki LIVE-AUDIT-FIX1 notu.
+  # Koşul YANLIŞSA (check mode) post_verify.yml'in İÇERİĞİ (meta:
+  # reset_connection dahil, "Bağlantıyı sıfırla" adlı task) play'e HİÇ
+  # EKLENMEZ. Bu task'ın adı BİLEREK post_verify.yml'in içindeki
+  # "Bağlantıyı sıfırla" task adıyla AYNI kelimeleri TAŞIMAZ --
+  # tests/run_offline_tests.sh'in check-mode-sızıntı testi, "Bağlantıyı
+  # sıfırla" ifadesinin çıktıda hiç GÖRÜNMEDİĞİNİ arar; bu dış task'ın adı
+  # aynı ifadeyi taşısaydı (skip edilse bile TASK başlığı basıldığından)
+  # test yanlışlıkla kendi kendini geçersiz kılardı.
+  ansible.builtin.include_tasks: post_verify.yml
+  when:
+    - not ansible_check_mode
+    - ufw_hardening_any_change | default(false)

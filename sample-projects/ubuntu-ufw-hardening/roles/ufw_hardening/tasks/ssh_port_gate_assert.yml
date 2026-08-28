@@ -1,0 +1,42 @@
+---
+# roles/ufw_hardening/tasks/ssh_port_gate_assert.yml
+#
+# TEK KAYNAKLI SSH portu doğrulama gate'i. Host'a bağlı olmayan SAF
+# mantık: `ansible_port` (veya varsayılan 22) 1..65535 aralığında geçerli
+# bir tam sayı mı doğrular. Bu kontrol GEÇMEDEN apply.yml'deki HİÇBİR
+# UFW yazma komutu çalışmaz -- ubuntu-ufw-audit/roles/ufw_audit/tasks/
+# checks.yml'deki "Inventory SSH portu geçerli mi" kontrolüyle BİREBİR
+# aynı ayrıştırma mantığı, ama orada `ignore_errors: true` ile salt
+# raporlanan bir bulgudur; BURADA HARD GATE'tir.
+#
+# Sayısal biçim önce `is match` ile doğrulanır -- `| int` filtresi sayısal
+# olmayan bir string üzerinde şablon istisnası atabilir; bu yüzden
+# ayrıştırılamayan bir değer ASLA `| int`'e gönderilmez, doğrudan
+# fail-closed sayılır.
+#
+# Geçerliyse `ufw_hardening_ssh_port_numeric` fact'ini sabitler --
+# apply.yml'deki TÜM UFW argv'leri BUNU kullanır; doğrulanmamış hiçbir
+# değer argv'ye ulaşmaz.
+#
+# tests/check_ssh_port_gate.yml bu dosyayı gerçek bir hedef olmadan,
+# sahte `ansible_port` değerleriyle doğrudan import ederek test eder.
+
+- name: "UFW Hardening | Inventory SSH portu geçerli mi (1..65535) -- HARD GATE"
+  vars:
+    ufw_hardening_ssh_port_raw: "{{ ansible_port | default(22) }}"
+    ufw_hardening_ssh_port_valid_format: "{{ (ufw_hardening_ssh_port_raw | string) is match('^[0-9]+$') }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_hardening_ssh_port_valid_format
+      - (ufw_hardening_ssh_port_raw | string | int) >= 1
+      - (ufw_hardening_ssh_port_raw | string | int) <= 65535
+    fail_msg: >-
+      FAIL-CLOSED: ansible_port='{{ ufw_hardening_ssh_port_raw }}' geçerli
+      bir 1..65535 port numarası değil (sayısal biçim
+      {{ 'geçerli' if ufw_hardening_ssh_port_valid_format else 'GEÇERSİZ' }}).
+      Hiçbir UFW yazma komutu çalıştırılmadı.
+    success_msg: "COMPLIANT: SSH portu={{ ufw_hardening_ssh_port_raw }}."
+
+- name: "UFW Hardening | Doğrulanmış SSH portunu sabitle (apply.yml tarafından kullanılır)"
+  ansible.builtin.set_fact:
+    ufw_hardening_ssh_port_numeric: "{{ (ansible_port | default(22)) | string | int }}"

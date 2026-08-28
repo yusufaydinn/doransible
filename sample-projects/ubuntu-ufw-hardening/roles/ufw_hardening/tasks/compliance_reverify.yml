@@ -1,0 +1,133 @@
+---
+# roles/ufw_hardening/tasks/compliance_reverify.yml
+#
+# Host'a bağlı olmayan SAF mantık: apply.yml'in UFW'yi enable ETTİKTEN
+# HEMEN SONRA (henüz bağlantı sıfırlanmadan, mevcut SSH oturumu üzerinden)
+# okuduğu `ufw status verbose` çıktısını VE `/etc/default/ufw` ham
+# içeriğini, ubuntu-ufw-audit/roles/ufw_audit/tasks/checks.yml'in
+# KANITLANMIŞ parse mantığıyla BİREBİR AYNI biçimde değerlendirir --
+# active mi, üç default policy uygun mu, logging seviyesi uygun mu, SSH
+# allow kuralı var mı. Bu, "değişiklik yapıldıktan hemen sonra gerçekten
+# beklenen durumda mıyız" sorusunu cevaplar; reset_connection/
+# wait_for_connection (post_verify.yml) ise AYRI ve TAMAMLAYICI bir
+# amaca hizmet eder: config doğruluğu değil, GERÇEKTEN YENİ bir SSH
+# bağlantısının kurulabildiğini (conntrack ESTABLISHED/RELATED
+# istisnasının maskeleyemeyeceği bir "yeni bağlantı" testini) kanıtlar.
+#
+# tests/check_compliance.yml bu dosyayı sahte (fixture) çıktıyla, gerçek
+# host/sudo/UFW gerektirmeden doğrudan import ederek test eder.
+#
+# Parametreler (import_tasks çağrısında `vars:` ile verilir):
+#   ufw_hardening_reverify_status_source      -> {stdout_lines: [...]} biçiminde
+#                                                 bir register sonucu ("ufw status verbose")
+#   ufw_hardening_reverify_default_ufw_raw    -> "/etc/default/ufw" ham içeriği (string)
+#   ufw_hardening_reverify_ssh_port_numeric   -> system_checks.yml tarafından doğrulanmış port
+#
+# BU DOSYA KENDİSİ ASLA `fail`/hard-assert ile PLAY'İ DURDURMAZ: tüm alan
+# kontrolleri ignore_errors:true ile çalışır, sonuç tek bir
+# ufw_hardening_reverify_failed boolean fact'ine indirgenir -- ubuntu-ufw-audit'teki
+# gibi bir alan uygunsuz olsa bile diğer kontroller durmaz, operatöre TEK
+# seferde tam tablo verilir. Play'i durdurup durdurmamaya apply.yml'deki
+# ÇAĞIRAN karar verir.
+
+- name: "UFW Hardening | Yeniden doğrulama: UFW gerçekten active mi (ufw status verbose)"
+  vars:
+    ufw_hardening_reverify_status_lines: "{{ ufw_hardening_reverify_status_source.stdout_lines | default([]) }}"
+    ufw_hardening_reverify_status_field_lines: "{{ ufw_hardening_reverify_status_lines | select('match', '^Status:\\s') | list }}"
+    ufw_hardening_reverify_status_value: "{{ ((ufw_hardening_reverify_status_field_lines + ['Status: unset'])[0].split(':', 1)[1]) | trim }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_hardening_reverify_status_field_lines | length == 1
+      - ufw_hardening_reverify_status_value == "active"
+    fail_msg: >-
+      NON-COMPLIANT (reverify): 'Status:' satırı
+      {{ ufw_hardening_reverify_status_field_lines | length }} kez görüldü
+      (1 bekleniyor), değer='{{ ufw_hardening_reverify_status_value }}'
+      ('active' bekleniyor).
+    success_msg: "COMPLIANT (reverify): UFW active."
+  ignore_errors: true
+  register: ufw_hardening_reverify_check_active
+
+- name: "UFW Hardening | Yeniden doğrulama: /etc/default/ufw default policy alanları uygun mu"
+  vars:
+    ufw_hardening_reverify_default_ufw_lines: "{{ ufw_hardening_reverify_default_ufw_raw.split('\n') }}"
+    ufw_hardening_reverify_input_lines: "{{ ufw_hardening_reverify_default_ufw_lines | select('match', '^DEFAULT_INPUT_POLICY\\s*=') | list }}"
+    ufw_hardening_reverify_input_raw: "{{ (ufw_hardening_reverify_input_lines + ['DEFAULT_INPUT_POLICY=__unset__'])[0].split('=', 1)[1] | trim }}"
+    ufw_hardening_reverify_input_value: "{{ ufw_hardening_reverify_input_raw | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_hardening_reverify_output_lines: "{{ ufw_hardening_reverify_default_ufw_lines | select('match', '^DEFAULT_OUTPUT_POLICY\\s*=') | list }}"
+    ufw_hardening_reverify_output_raw: "{{ (ufw_hardening_reverify_output_lines + ['DEFAULT_OUTPUT_POLICY=__unset__'])[0].split('=', 1)[1] | trim }}"
+    ufw_hardening_reverify_output_value: "{{ ufw_hardening_reverify_output_raw | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_hardening_reverify_forward_lines: "{{ ufw_hardening_reverify_default_ufw_lines | select('match', '^DEFAULT_FORWARD_POLICY\\s*=') | list }}"
+    ufw_hardening_reverify_forward_raw: "{{ (ufw_hardening_reverify_forward_lines + ['DEFAULT_FORWARD_POLICY=__unset__'])[0].split('=', 1)[1] | trim }}"
+    ufw_hardening_reverify_forward_value: "{{ ufw_hardening_reverify_forward_raw | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_hardening_reverify_input_lines | length == 1
+      - ufw_hardening_reverify_input_value == ufw_hardening_expected_default_input_policy
+      - ufw_hardening_reverify_output_lines | length == 1
+      - ufw_hardening_reverify_output_value == ufw_hardening_expected_default_output_policy
+      - ufw_hardening_reverify_forward_lines | length == 1
+      - ufw_hardening_reverify_forward_value == ufw_hardening_expected_default_forward_policy
+    fail_msg: >-
+      NON-COMPLIANT (reverify): default policy alanları beklenenden sapmış --
+      DEFAULT_INPUT_POLICY (görülen={{ ufw_hardening_reverify_input_lines | length }}x,
+      değer='{{ ufw_hardening_reverify_input_value }}', beklenen='{{ ufw_hardening_expected_default_input_policy }}'),
+      DEFAULT_OUTPUT_POLICY (görülen={{ ufw_hardening_reverify_output_lines | length }}x,
+      değer='{{ ufw_hardening_reverify_output_value }}', beklenen='{{ ufw_hardening_expected_default_output_policy }}'),
+      DEFAULT_FORWARD_POLICY (görülen={{ ufw_hardening_reverify_forward_lines | length }}x,
+      değer='{{ ufw_hardening_reverify_forward_value }}', beklenen='{{ ufw_hardening_expected_default_forward_policy }}').
+    success_msg: >-
+      COMPLIANT (reverify): DEFAULT_INPUT_POLICY={{ ufw_hardening_reverify_input_value }},
+      DEFAULT_OUTPUT_POLICY={{ ufw_hardening_reverify_output_value }},
+      DEFAULT_FORWARD_POLICY={{ ufw_hardening_reverify_forward_value }}.
+  ignore_errors: true
+  register: ufw_hardening_reverify_check_policy
+
+- name: "UFW Hardening | Yeniden doğrulama: logging açık ve beklenen seviyede mi"
+  vars:
+    ufw_hardening_reverify_status_lines: "{{ ufw_hardening_reverify_status_source.stdout_lines | default([]) }}"
+    ufw_hardening_reverify_logging_field_lines: "{{ ufw_hardening_reverify_status_lines | select('match', '^Logging:\\s') | list }}"
+    ufw_hardening_reverify_logging_line: "{{ (ufw_hardening_reverify_logging_field_lines + ['Logging: unset'])[0] }}"
+    ufw_hardening_reverify_logging_expected_line: "Logging: on ({{ ufw_hardening_logging_level }})"
+  ansible.builtin.assert:
+    that:
+      - ufw_hardening_reverify_logging_field_lines | length == 1
+      - ufw_hardening_reverify_logging_line == ufw_hardening_reverify_logging_expected_line
+    fail_msg: >-
+      NON-COMPLIANT (reverify): 'Logging:' satırı
+      {{ ufw_hardening_reverify_logging_field_lines | length }} kez görüldü
+      (1 bekleniyor), satır='{{ ufw_hardening_reverify_logging_line }}',
+      beklenen='{{ ufw_hardening_reverify_logging_expected_line }}'.
+    success_msg: "COMPLIANT (reverify): {{ ufw_hardening_reverify_logging_line }}."
+  ignore_errors: true
+  register: ufw_hardening_reverify_check_logging
+
+- name: "UFW Hardening | Yeniden doğrulama: SSH portu için TCP allow kuralı var mı"
+  # ubuntu-ufw-audit/roles/ufw_audit/tasks/checks.yml'deki AYNI desteklenen
+  # biçim kümesi: "<port>/tcp ALLOW IN <kaynak>", "<port> ALLOW IN <kaynak>"
+  # ve "(v6)" varyantları. Uygulama profili tabanlı kurallar veya port
+  # aralıkları KASITLI olarak eşleşmez.
+  vars:
+    ufw_hardening_reverify_status_lines: "{{ ufw_hardening_reverify_status_source.stdout_lines | default([]) }}"
+    ufw_hardening_reverify_ssh_allow_pattern: "^{{ ufw_hardening_reverify_ssh_port_numeric }}(/tcp)?( \\(v6\\))?\\s+ALLOW\\s+IN\\s+\\S.*$"
+    ufw_hardening_reverify_ssh_allow_lines: "{{ ufw_hardening_reverify_status_lines | select('match', ufw_hardening_reverify_ssh_allow_pattern) | list }}"
+  ansible.builtin.assert:
+    that:
+      - ufw_hardening_reverify_ssh_allow_lines | length >= 1
+    fail_msg: >-
+      NON-COMPLIANT (reverify): SSH portu {{ ufw_hardening_reverify_ssh_port_numeric }}/tcp
+      için `ufw status verbose` çıktısında desteklenen biçimde bir "ALLOW IN"
+      kuralı bulunamadı (0 satır eşleşti).
+    success_msg: >-
+      COMPLIANT (reverify): SSH portu {{ ufw_hardening_reverify_ssh_port_numeric }}/tcp
+      için {{ ufw_hardening_reverify_ssh_allow_lines | length }} allow kuralı bulundu.
+  ignore_errors: true
+  register: ufw_hardening_reverify_check_ssh_allow_rule
+
+- name: "UFW Hardening | Yeniden doğrulama sonucunu normalize et"
+  ansible.builtin.set_fact:
+    ufw_hardening_reverify_failed: >-
+      {{ (ufw_hardening_reverify_check_active.failed | default(false))
+         or (ufw_hardening_reverify_check_policy.failed | default(false))
+         or (ufw_hardening_reverify_check_logging.failed | default(false))
+         or (ufw_hardening_reverify_check_ssh_allow_rule.failed | default(false)) }}

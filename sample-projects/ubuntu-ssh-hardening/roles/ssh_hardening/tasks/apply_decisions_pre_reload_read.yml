@@ -1,0 +1,24 @@
+---
+# roles/ssh_hardening/tasks/apply_decisions_pre_reload_read.yml
+#
+# SAF karar mantığı: pre-reload `sshd -T` OKUMA komutunun (apply.yml'de
+# ssh_hardening_pre_reload_sshd_t olarak register edilir) kendisinin
+# BAŞARISIZ olup olmadığını normalize eder. Bu, compliance_assert.yml'in
+# ürettiği "değerler baseline'a uymuyor" (ssh_hardening_compliance_failed)
+# sonucundan AYRI ve ÖNCE gelen bir hata sınıfıdır: komutun kendisi
+# (`sshd -T`) nonzero rc ile dönerse, stdout güvenilir değildir ve
+# compliance_assert.yml'i hiç çalıştırmadan bunu ayrı bir "aday
+# başarısızlık nedeni" (effective-read) olarak işaretleriz.
+#
+# apply.yml'deki gerçek `sshd -T` task'ı `failed_when: false` taşır --
+# aksi hâlde nonzero rc Ansible'ın kendi task-failure mekanizmasıyla
+# play'i burada keserdi ve rollback task'larına hiç ulaşılamazdı (aynı
+# BULGU1 gerekçesi, bu kez syntax değil effective-okuma adımı için).
+#
+# tests/check_apply_decisions.yml bu dosyayı gerçek bir hedef olmadan,
+# sahte bir ssh_hardening_pre_reload_sshd_t.rc değeriyle doğrudan import
+# ederek test eder.
+
+- name: "SSH Hardening | Pre-reload sshd -T okuma sonucunu normalize et (check-mode/skip güvenli)"
+  ansible.builtin.set_fact:
+    ssh_hardening_pre_reload_read_failed: "{{ (ssh_hardening_pre_reload_sshd_t.rc | default(0)) | int != 0 }}"

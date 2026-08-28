@@ -1,0 +1,45 @@
+# {{ ansible_managed | default('Managed by DORAnsible') }}
+#
+# BU DOSYA DORAnsible ssh_hardening role'ü TARAFINDAN YÖNETİLİR.
+# Elle yapılan değişiklikler bir sonraki normal-mode çalıştırmasında
+# sessizce ezilir.
+#
+# --- Drop-in precedence (OpenSSH sshd_config(5) + Ubuntu varsayılan sshd_config) ---
+# Ubuntu'nun varsayılan /etc/ssh/sshd_config dosyası
+# "Include /etc/ssh/sshd_config.d/*.conf" satırını dosyanın EN ÜSTÜNDE,
+# kendi (yorum satırı olmayan) ayarlarından ÖNCE taşır; Include'daki glob
+# joker karakterleri sözlüksel (lexical) sırada genişletilir.
+# sshd_config(5): "for each keyword, the first obtained value will be
+# used" -- yani OpenSSH bir keyword için İLK GÖRDÜĞÜ değeri kullanır, en
+# SON değeri değil. Sonuç:
+#   * Bu drop-in'deki her değer, ana sshd_config'in kendi (yorum satırı
+#     olmayan) varsayılanlarına (örn. KbdInteractiveAuthentication,
+#     X11Forwarding, UsePAM satırları) otomatik olarak kazanır, çünkü
+#     Include onlardan ÖNCE işlenir.
+#   * sshd_config.d/ içindeki dosyalar arasında ise sözlüksel olarak
+#     ERKEN sıralanan dosya kazanır -- birçok başka *.d/ sisteminin
+#     alıştığı "son yazan kazanır" kuralının TERSİDİR. Bu dosyanın adı
+#     bilinçli olarak "00-" ile başlar ki yaygın biçimde görülen
+#     "50-cloud-init.conf" gibi paket/araç drop-in'lerine karşı kazansın.
+#   * Bu dosyadan sözlüksel olarak DAHA ERKEN sıralanan bir drop-in
+#     (örn. "00-"dan önce sıralanan bir ad) yine de bu değerleri
+#     geçersiz kılabilir -- bu, DORAnsible'ın denetleyemediği/garanti
+#     edemediği bir OpenSSH davranışıdır (bkz. README.md "Sınırlar").
+#
+# İlk dilim kapsamı DIŞINDA (bu dosya tarafından YÖNETİLMEZ):
+# AllowUsers/AllowGroups, DenyUsers/DenyGroups, Ciphers, MACs,
+# KexAlgorithms. Bu satırlar burada asla yazılmaz.
+#
+# Yönetilen tek dosya budur: ana sshd_config veya başka bir drop-in
+# dosyası bu role tarafından okunmaz ya da değiştirilmez.
+
+PermitRootLogin {{ ssh_hardening_permit_root_login }}
+PasswordAuthentication {{ ssh_hardening_password_authentication }}
+PubkeyAuthentication {{ ssh_hardening_pubkey_authentication }}
+PermitEmptyPasswords {{ ssh_hardening_permit_empty_passwords }}
+KbdInteractiveAuthentication {{ ssh_hardening_kbd_interactive_authentication }}
+X11Forwarding {{ ssh_hardening_x11_forwarding }}
+AllowAgentForwarding {{ ssh_hardening_allow_agent_forwarding }}
+AllowTcpForwarding {{ ssh_hardening_allow_tcp_forwarding }}
+MaxAuthTries {{ ssh_hardening_max_auth_tries }}
+LoginGraceTime {{ ssh_hardening_login_grace_time }}

@@ -1,0 +1,48 @@
+---
+# roles/ssh_audit/defaults/main.yml
+#
+# Bu değerler güvenli varsayılanlardır. Kayıtlı project/inventory üzerinden
+# group_vars veya host_vars ile override edilebilir. Amaç, MFA, bastion
+# (jump host) veya port-forwarding gerektiren ortamları körlemesine
+# "uygunsuz" saymamaktır: bu ihtiyaçları olan profiller ilgili değişkeni
+# açıkça değiştirir ve audit ona göre compliant/non-compliant kararı verir.
+
+ssh_audit_supported_ubuntu_versions:
+  - "22.04"
+  - "24.04"
+
+# sshd -T çıktısındaki permitrootlogin için kabul edilen değerler.
+# "no" en güvenlisidir; yalnızca anahtarla root erişimine izin veren
+# ortamlar listeye "prohibit-password" ekleyebilir.
+ssh_audit_permit_root_login_allowed:
+  - "no"
+
+ssh_audit_password_authentication_allowed: false
+ssh_audit_pubkey_authentication_required: true
+ssh_audit_permit_empty_passwords_allowed: false
+
+# Keyboard-interactive genelde PAM tabanlı MFA için açılır. Varsayılan
+# kapalıdır; MFA kullanan profiller bunu true yapmalıdır.
+ssh_audit_kbd_interactive_authentication_allowed: false
+
+ssh_audit_x11_forwarding_allowed: false
+ssh_audit_agent_forwarding_allowed: false
+
+# AllowTcpForwarding OpenSSH'ta boolean değildir: yes/all/no/local/remote
+# değerlerini alabilir. "local" ve "remote" TCP forwarding'i kısmen açar;
+# varsayılan "kapalı" profilde bunlar da compliant sayılmaz. Bastion/
+# jump-host rolündeki host grupları listeye ihtiyaç duydukları değeri
+# (örn. "local") açıkça eklemelidir.
+ssh_audit_tcp_forwarding_allowed_values:
+  - "no"
+
+ssh_audit_max_auth_tries_max: 6
+ssh_audit_login_grace_time_max_seconds: 60
+
+# Boş liste bırakılırsa ilgili kontrol yalnız bilgi amaçlıdır: mevcut
+# değeri raporlar, uygunsuzluk üretmez. Doldurulursa etkin değerle
+# birebir karşılaştırılır.
+ssh_audit_expected_allow_users: []
+ssh_audit_expected_allow_groups: []
+ssh_audit_expected_deny_users: []
+ssh_audit_expected_deny_groups: []

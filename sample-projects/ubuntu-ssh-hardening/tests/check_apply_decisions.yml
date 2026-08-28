@@ -1,0 +1,75 @@
+---
+# tests/check_apply_decisions.yml
+#
+# Offline: apply_decisions_pre.yml / apply_decisions_pre_reload_read.yml /
+# apply_decisions_combine.yml / apply_decisions_rollback.yml SAF karar
+# mantığını, gerçek template/command/copy/file/systemd modüllerinin
+# ÜRETMİŞ OLACAĞI sonuçları SİMÜLE eden sahte register-şekilli
+# değişkenlerle çalıştırır. Gerçek host, bağlantı, sudo veya sshd
+# binary'si GEREKMEZ -- BULGU1/BULGU2/FIX1.1'in "failure-atomic" karar
+# akışını (rollback'e ulaşılıyor mu, reload doğru koşullarda mı
+# tetikleniyor) apply.yml'in KENDİSİNİ gerçek bir hedefte çalıştırmadan
+# kanıtlamak için vardır.
+#
+# Girdi extra-var'ları (hepsinin makul varsayılanı var):
+#   fake_apply_changed         (bool, varsayılan: true)
+#   fake_apply_backup_file     (str,  varsayılan: '')
+#   fake_candidate_verify_rc   (int,  varsayılan: 0)  -- aday `sshd -t`
+#   fake_pre_reload_read_rc    (int,  varsayılan: 0)  -- pre-reload `sshd -T`
+#                               OKUMA komutunun KENDİSİ (FIX1.1)
+#   fake_compliance_failed     (bool, varsayılan: false) -- okunan
+#                               değerlerin baseline'a uyup uymadığı
+#   fake_rollback_verify_rc    (int,  varsayılan: 0)
+#   run_rollback_normalize     (bool, varsayılan: false) -- gerçek
+#                               apply.yml'de bu adım yalnız
+#                               candidate_failed iken çalışır; test bunu
+#                               açıkça kontrol eder.
+#
+# Sıra apply.yml'deki GERÇEK sırayla birebir aynıdır: pre -> pre_reload_read
+# -> combine -> (opsiyonel) rollback.
+#
+# Çıktı: apply.yml'deki GERÇEK `when:` koşullarını birebir yansıtan
+# "RESULT ..." satırları (debug ile basılır, test script'i grep ile okur).
+
+- name: SSH Hardening offline apply-decisions harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ssh_hardening_apply:
+      changed: "{{ fake_apply_changed | default(true) }}"
+      backup_file: "{{ fake_apply_backup_file | default('') }}"
+    ssh_hardening_candidate_verify:
+      rc: "{{ fake_candidate_verify_rc | default(0) }}"
+    ssh_hardening_pre_reload_sshd_t:
+      rc: "{{ fake_pre_reload_read_rc | default(0) }}"
+    ssh_hardening_compliance_failed: "{{ fake_compliance_failed | default(false) }}"
+    ssh_hardening_rollback_verify:
+      rc: "{{ fake_rollback_verify_rc | default(0) }}"
+  tasks:
+    - name: apply_decisions_pre.yml'i çalıştır
+      ansible.builtin.import_tasks: ../roles/ssh_hardening/tasks/apply_decisions_pre.yml
+
+    - name: apply_decisions_pre_reload_read.yml'i çalıştır
+      ansible.builtin.import_tasks: ../roles/ssh_hardening/tasks/apply_decisions_pre_reload_read.yml
+
+    - name: apply_decisions_combine.yml'i çalıştır
+      ansible.builtin.import_tasks: ../roles/ssh_hardening/tasks/apply_decisions_combine.yml
+
+    - name: "apply_decisions_rollback.yml'i çalıştır (yalnız gerçek apply.yml'deki AYNI koşulda)"
+      ansible.builtin.import_tasks: ../roles/ssh_hardening/tasks/apply_decisions_rollback.yml
+      when: (run_rollback_normalize | default(false)) | bool
+
+    - name: Sonuç bayraklarını raporla
+      ansible.builtin.debug:
+        msg:
+          - "RESULT apply_changed={{ ssh_hardening_apply_changed }}"
+          - "RESULT had_backup={{ ssh_hardening_had_backup }}"
+          - "RESULT candidate_verify_failed={{ ssh_hardening_candidate_verify_failed }}"
+          - "RESULT pre_reload_read_failed={{ ssh_hardening_pre_reload_read_failed }}"
+          - "RESULT candidate_failed={{ ssh_hardening_candidate_failed }}"
+          - "RESULT candidate_failure_reason={{ ssh_hardening_candidate_failure_reason }}"
+          - "RESULT reload_would_run={{ (not ssh_hardening_candidate_failed) and ssh_hardening_apply_changed }}"
+          - "RESULT restore_would_run={{ ssh_hardening_candidate_failed and ssh_hardening_had_backup }}"
+          - "RESULT remove_would_run={{ ssh_hardening_candidate_failed and (not ssh_hardening_had_backup) }}"
+          - "RESULT rollback_verify_failed={{ ssh_hardening_rollback_verify_failed | default('n/a') }}"

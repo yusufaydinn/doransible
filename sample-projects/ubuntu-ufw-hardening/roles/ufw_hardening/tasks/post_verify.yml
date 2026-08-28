@@ -1,0 +1,48 @@
+---
+# roles/ufw_hardening/tasks/post_verify.yml
+#
+# UFW etkinleştirildikten ve compliance_reverify.yml (mevcut bağlantı
+# üzerinden) BAŞARIYLA geçtikten SONRA: `ansible.builtin.meta:
+# reset_connection` ile Ansible'ın ControlPersist ile çoğullanmış ESKİ
+# bağlantısı kasıtlı olarak kapatılır, ardından
+# `ansible.builtin.wait_for_connection` ile GERÇEKTEN YENİ bir SSH
+# bağlantısının SINIRLI bir sürede kurulabildiği kanıtlanır.
+#
+# BU ADIM NEDEN GEREKLİ (compliance_reverify.yml'in mevcut bağlantı
+# üzerinden yaptığı kontrolden AYRI ve TAMAMLAYICI bir amaç): UFW/netfilter
+# tipik olarak ESTABLISHED/RELATED bağlantılara (mevcut SSH oturumu dahil)
+# izin veren bir "before" kuralı taşır -- bu yüzden apply.yml'deki enable
+# ANINDA hâlâ açık olan mevcut SSH oturumunuz, SSH portu için yazılan
+# allow kuralı yanlış/eksik olsa BİLE conntrack ESTABLISHED istisnası
+# sayesinde kesilmeyebilir. Yani "mevcut bağlantım hâlâ çalışıyor" tek
+# başına "YENİ bağlantılar da çalışıyor" ANLAMINA GELMEZ. reset_connection
+# + wait_for_connection, GERÇEKTEN YENİ bir el sıkışma zorlayarak SSH
+# portu allow kuralının fiilen YENİ bağlantılara izin verdiğini kanıtlayan
+# somut bir "lockout olmadı" duman testidir.
+#
+# main.yml bu dosyayı `include_tasks` (DYNAMIC) ile ve YALNIZ İKİ koşul
+# BİRLİKTE sağlandığında dahil eder (BULGU1/AUDIT-FIX1):
+#   1) `not ansible_check_mode` (apply.yml zaten fail-closed durduysa play
+#      buraya HİÇ ULAŞMAZ -- ayrı bir "apply_failed" bayrağına gerek
+#      YOKTUR, Ansible'ın standart task-failure davranışı yeterlidir), VE
+#   2) `ufw_hardening_any_change == true` (apply_decisions.yml'deki altı
+#      "would_*" bayrağının OR birleşimi -- host ZATEN tam uyumluysa,
+#      yani apply.yml'deki HİÇBİR yazma komutu çalışmadıysa, bağlantı hiç
+#      DEĞİŞMEMİŞTİR ve reconnect testine gerek YOKTUR).
+# ubuntu-ssh-hardening/roles/ssh_hardening/tasks/main.yml'deki
+# LIVE-AUDIT-FIX1 dersiyle BİREBİR aynı gerekçe: `ansible.builtin.meta:
+# reset_connection` bir `when:` koşulunu KENDİ ÜZERİNDE desteklemez --
+# Ansible bunu her zaman "[WARNING]: reset_connection task does not
+# support when conditional" uyarısıyla birlikte KOŞULSUZ çalıştırır. Bu
+# dosyadaki hiçbir task kendi üzerinde bir `when:` TAŞIMAZ -- tek gate
+# main.yml'deki `include_tasks` seviyesindedir; dosya bu iki koşuldan
+# HERHANGİ BİRİ sağlanmadığında main.yml tarafından İÇERİĞİYLE BİRLİKTE
+# hiç dahil edilmez.
+
+- name: "UFW Hardening | Bağlantıyı sıfırla (yeni SSH oturumuyla lockout testini doğrula)"
+  ansible.builtin.meta: reset_connection
+
+- name: "UFW Hardening | Yeni bağlantının kurulmasını sınırlı sürede bekle"
+  ansible.builtin.wait_for_connection:
+    timeout: "{{ ufw_hardening_reconnect_timeout_seconds }}"
+    sleep: "{{ ufw_hardening_reconnect_sleep_seconds }}"

@@ -1,0 +1,132 @@
+---
+# roles/ufw_hardening/tasks/apply_decisions.yml
+#
+# SAF karar mantığı (host'a bağlı değildir, hiçbir gerçek komut çalıştırmaz):
+# apply.yml'deki dört ön-okuma task'ının (ufw show added, ufw status
+# verbose, /etc/default/ufw slurp, /etc/ufw/ufw.conf slurp) ZATEN register
+# ettiği ham sonuçları okuyup PARSE eder ve altı "would_*" bayrağını VE
+# bunların OR birleşimi olan `ufw_hardening_any_change`'i üretir.
+# tests/check_apply_decisions.yml bu dosyayı gerçek bir hedef olmadan,
+# SİMÜLE EDİLMİŞ register-şekilli değişkenlerle doğrudan import ederek
+# test eder.
+#
+# BULGU1 (AUDIT-FIX1) -- gerçek idempotency: bu bayraklar artık YALNIZ (a)
+# check mode'da dürüst bir önizleme mesajı ve (b) doğru `changed_when`
+# raporlaması için DEĞİL, apply.yml'deki HER yazma komutunun `when:`
+# koşulunun BİR PARÇASI olarak da kullanılır -- bir alan zaten uyumluysa
+# ilgili UFW komutu apply.yml'de HİÇ ÇALIŞTIRILMAZ (`ufw default ...`
+# kalıcı dosyayı yazar ve UFW aktifse firewall'ı stop/start eder; `ufw
+# --force enable` aktifken bile start_firewall yolunu çalıştırır --
+# `changed_when: false` bu mutasyonu/reload'u ENGELLEMEZ, yalnız Ansible
+# raporunu değiştirir; bu yüzden çalışıp çalışmama kararı ARTIK bu
+# bayraklara BAĞLIDIR). `ufw_hardening_any_change`, reset_connection +
+# wait_for_connection'ın (post_verify.yml) normal modda yalnız GERÇEKTEN
+# bir değişiklik uygulandıysa çalışmasını sağlamak için main.yml'de
+# kullanılır.
+#
+# BULGU2 (AUDIT-FIX1) -- fail-closed ön-okuma sözleşmesi: would_*
+# bayrakları üretilmeden ÖNCE, aşağıdaki İLK task girdileri HARD GATE ile
+# doğrular: `ufw show added`/`ufw status verbose` rc=0 olmalı; 'Status:',
+# DEFAULT_INPUT_POLICY, DEFAULT_OUTPUT_POLICY, DEFAULT_FORWARD_POLICY ve
+# LOGLEVEL alanlarının HER BİRİ TAM OLARAK BİR KEZ VE tanınan bir değerle
+# görünmesi gerekir. Eksik, duplicate veya tanınmayan bir alan ASLA
+# sessizce "değişiklik gerekli" (would_*=true) sayılmaz -- bu durumda role
+# burada HARD FAIL ile durur; apply.yml'deki HİÇBİR yazma komutuna
+# ulaşılmaz.
+#
+# Parametreler (import_tasks çağrısında `vars:` ile verilir, ya gerçek
+# register'lar ya da fixture-sürümlü sahte eşdeğerleri):
+#   ufw_hardening_pre_show_added       -> {rc: int, stdout_lines: [...]} ("ufw show added")
+#   ufw_hardening_pre_status           -> {rc: int, stdout_lines: [...]} ("ufw status verbose")
+#   ufw_hardening_pre_default_ufw_raw  -> "/etc/default/ufw" ham içeriği (string,
+#                                          apply.yml'de slurp+b64decode SONRASI)
+#   ufw_hardening_pre_ufw_conf_raw     -> "/etc/ufw/ufw.conf" ham içeriği (string,
+#                                          apply.yml'de slurp+b64decode SONRASI)
+#   ufw_hardening_ssh_port_numeric     -> system_checks.yml tarafından doğrulanmış port
+
+- name: "UFW Hardening | Ön-okuma girdilerini fail-closed doğrula (rc + alan biçimi) -- HARD GATE"
+  vars:
+    ufw_hardening_pre_show_added_rc: "{{ ufw_hardening_pre_show_added.rc | default(-1) }}"
+    ufw_hardening_pre_status_rc: "{{ ufw_hardening_pre_status.rc | default(-1) }}"
+    ufw_hardening_pre_default_ufw_lines: "{{ ufw_hardening_pre_default_ufw_raw.split('\n') }}"
+    ufw_hardening_pre_ufw_conf_lines: "{{ ufw_hardening_pre_ufw_conf_raw.split('\n') }}"
+    ufw_hardening_pre_status_lines: "{{ ufw_hardening_pre_status.stdout_lines | default([]) }}"
+    ufw_hardening_pre_status_field_lines: "{{ ufw_hardening_pre_status_lines | select('match', '^Status:\\s') | list }}"
+    ufw_hardening_pre_status_value: "{{ ((ufw_hardening_pre_status_field_lines + ['Status: __unset__'])[0].split(':', 1)[1]) | trim }}"
+    ufw_hardening_pre_input_lines: "{{ ufw_hardening_pre_default_ufw_lines | select('match', '^DEFAULT_INPUT_POLICY\\s*=') | list }}"
+    ufw_hardening_pre_input_value: "{{ ((ufw_hardening_pre_input_lines + ['DEFAULT_INPUT_POLICY=__unset__'])[0].split('=', 1)[1] | trim) | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_hardening_pre_output_lines: "{{ ufw_hardening_pre_default_ufw_lines | select('match', '^DEFAULT_OUTPUT_POLICY\\s*=') | list }}"
+    ufw_hardening_pre_output_value: "{{ ((ufw_hardening_pre_output_lines + ['DEFAULT_OUTPUT_POLICY=__unset__'])[0].split('=', 1)[1] | trim) | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_hardening_pre_forward_lines: "{{ ufw_hardening_pre_default_ufw_lines | select('match', '^DEFAULT_FORWARD_POLICY\\s*=') | list }}"
+    ufw_hardening_pre_forward_value: "{{ ((ufw_hardening_pre_forward_lines + ['DEFAULT_FORWARD_POLICY=__unset__'])[0].split('=', 1)[1] | trim) | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_hardening_pre_loglevel_lines: "{{ ufw_hardening_pre_ufw_conf_lines | select('match', '^LOGLEVEL\\s*=') | list }}"
+    ufw_hardening_pre_loglevel_value: "{{ ((ufw_hardening_pre_loglevel_lines + ['LOGLEVEL=__unset__'])[0].split('=', 1)[1] | trim) | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+  ansible.builtin.assert:
+    that:
+      - (ufw_hardening_pre_show_added_rc | int) == 0
+      - (ufw_hardening_pre_status_rc | int) == 0
+      - ufw_hardening_pre_status_field_lines | length == 1
+      - ufw_hardening_pre_status_value in ["active", "inactive"]
+      - ufw_hardening_pre_input_lines | length == 1
+      - ufw_hardening_pre_input_value in ["ACCEPT", "DROP", "REJECT"]
+      - ufw_hardening_pre_output_lines | length == 1
+      - ufw_hardening_pre_output_value in ["ACCEPT", "DROP", "REJECT"]
+      - ufw_hardening_pre_forward_lines | length == 1
+      - ufw_hardening_pre_forward_value in ["ACCEPT", "DROP", "REJECT"]
+      - ufw_hardening_pre_loglevel_lines | length == 1
+      - ufw_hardening_pre_loglevel_value in ["off", "low", "medium", "high", "full"]
+    fail_msg: >-
+      FAIL-CLOSED (ön-okuma doğrulaması): girdiler güvenle ayrıştırılamadı --
+      show_added_rc={{ ufw_hardening_pre_show_added_rc }},
+      status_rc={{ ufw_hardening_pre_status_rc }},
+      'Status:' satırı={{ ufw_hardening_pre_status_field_lines | length }}x
+      (değer='{{ ufw_hardening_pre_status_value }}'),
+      DEFAULT_INPUT_POLICY={{ ufw_hardening_pre_input_lines | length }}x
+      (değer='{{ ufw_hardening_pre_input_value }}'),
+      DEFAULT_OUTPUT_POLICY={{ ufw_hardening_pre_output_lines | length }}x
+      (değer='{{ ufw_hardening_pre_output_value }}'),
+      DEFAULT_FORWARD_POLICY={{ ufw_hardening_pre_forward_lines | length }}x
+      (değer='{{ ufw_hardening_pre_forward_value }}'),
+      LOGLEVEL={{ ufw_hardening_pre_loglevel_lines | length }}x
+      (değer='{{ ufw_hardening_pre_loglevel_value }}'). Eksik, duplicate veya
+      tanınmayan bir alan ASLA sessizce "değişiklik gerekli" sayılmaz;
+      hiçbir UFW yazma komutu çalıştırılmadı.
+    success_msg: "COMPLIANT (ön-okuma doğrulaması): tüm girdi alanları tam bir kez ve tanınan biçimde."
+
+- name: "UFW Hardening | Ön-okuma sonuçlarını değerlendir"
+  vars:
+    ufw_hardening_pre_default_ufw_lines: "{{ ufw_hardening_pre_default_ufw_raw.split('\n') }}"
+    ufw_hardening_pre_ufw_conf_lines: "{{ ufw_hardening_pre_ufw_conf_raw.split('\n') }}"
+    ufw_hardening_pre_input_lines: "{{ ufw_hardening_pre_default_ufw_lines | select('match', '^DEFAULT_INPUT_POLICY\\s*=') | list }}"
+    ufw_hardening_pre_output_lines: "{{ ufw_hardening_pre_default_ufw_lines | select('match', '^DEFAULT_OUTPUT_POLICY\\s*=') | list }}"
+    ufw_hardening_pre_forward_lines: "{{ ufw_hardening_pre_default_ufw_lines | select('match', '^DEFAULT_FORWARD_POLICY\\s*=') | list }}"
+    ufw_hardening_pre_loglevel_lines: "{{ ufw_hardening_pre_ufw_conf_lines | select('match', '^LOGLEVEL\\s*=') | list }}"
+    ufw_hardening_pre_status_lines: "{{ ufw_hardening_pre_status.stdout_lines | default([]) }}"
+    ufw_hardening_pre_status_field_lines: "{{ ufw_hardening_pre_status_lines | select('match', '^Status:\\s') | list }}"
+    ufw_hardening_pre_show_added_lines: "{{ ufw_hardening_pre_show_added.stdout_lines | default([]) }}"
+  ansible.builtin.set_fact:
+    ufw_hardening_pre_active_value: "{{ ((ufw_hardening_pre_status_field_lines + ['Status: unset'])[0].split(':', 1)[1]) | trim }}"
+    ufw_hardening_pre_input_value: "{{ ((ufw_hardening_pre_input_lines + ['DEFAULT_INPUT_POLICY=__unset__'])[0].split('=', 1)[1] | trim) | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_hardening_pre_output_value: "{{ ((ufw_hardening_pre_output_lines + ['DEFAULT_OUTPUT_POLICY=__unset__'])[0].split('=', 1)[1] | trim) | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_hardening_pre_forward_value: "{{ ((ufw_hardening_pre_forward_lines + ['DEFAULT_FORWARD_POLICY=__unset__'])[0].split('=', 1)[1] | trim) | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_hardening_pre_loglevel_value: "{{ ((ufw_hardening_pre_loglevel_lines + ['LOGLEVEL=__unset__'])[0].split('=', 1)[1] | trim) | regex_replace('^[\\x22\\x27]', '') | regex_replace('[\\x22\\x27]$', '') }}"
+    ufw_hardening_pre_ssh_allow_present: "{{ (ufw_hardening_pre_show_added_lines | select('equalto', 'ufw allow ' ~ ufw_hardening_ssh_port_numeric ~ '/tcp') | list | length) > 0 }}"
+
+- name: "UFW Hardening | Planlanan değişiklikleri değerlendir (would_*)"
+  ansible.builtin.set_fact:
+    ufw_hardening_would_add_ssh_allow: "{{ not ufw_hardening_pre_ssh_allow_present }}"
+    ufw_hardening_would_set_incoming: "{{ ufw_hardening_pre_input_value != ufw_hardening_expected_default_input_policy }}"
+    ufw_hardening_would_set_outgoing: "{{ ufw_hardening_pre_output_value != ufw_hardening_expected_default_output_policy }}"
+    ufw_hardening_would_set_forward: "{{ ufw_hardening_pre_forward_value != ufw_hardening_expected_default_forward_policy }}"
+    ufw_hardening_would_set_logging: "{{ ufw_hardening_pre_loglevel_value != ufw_hardening_logging_level }}"
+    ufw_hardening_would_enable: "{{ ufw_hardening_pre_active_value != 'active' }}"
+
+- name: "UFW Hardening | Herhangi bir değişiklik planlanıyor mu (any_change -- reset_connection SADECE bu true iken açılır)"
+  ansible.builtin.set_fact:
+    ufw_hardening_any_change: >-
+      {{ ufw_hardening_would_add_ssh_allow
+         or ufw_hardening_would_set_incoming
+         or ufw_hardening_would_set_outgoing
+         or ufw_hardening_would_set_forward
+         or ufw_hardening_would_set_logging
+         or ufw_hardening_would_enable }}

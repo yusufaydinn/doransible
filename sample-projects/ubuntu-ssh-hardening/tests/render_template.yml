@@ -1,0 +1,34 @@
+---
+# tests/render_template.yml
+#
+# Offline: roles/ssh_hardening/templates/managed-drop-in.conf.j2'yi role
+# varsayılanlarıyla (gerekirse -e ile override) render eder ve sonucu
+# render_output_path'e yazar. Gerçek host, bağlantı veya sudo gerektirmez.
+#
+# FIX1.1: bu harness roles/ssh_hardening/tasks/main.yml'i (gerçek giriş
+# noktasını) HİÇ ÇAĞIRMAZ -- yalnızca .j2 dosyasını doğrudan render eder.
+# `profile_lock_check.yml` BURADA ÇALIŞMAZ. Bu yüzden -e ile bir baseline
+# değişkenini (ör. ssh_hardening_password_authentication) override eden
+# bir çağrı, YALNIZCA Jinja2 ikame mekanizmasının doğru çalıştığını
+# kanıtlar -- gerçek role çağrısında AYNI override'ın kabul edildiği
+# anlamına GELMEZ. Gerçek role çağrısında bu override, apply.yml'e hiç
+# ulaşmadan profile_lock_check.yml tarafından fail-closed reddedilir
+# (bkz. tests/check_profile_lock.yml ve README.md "Profil kilidi").
+
+- name: SSH Hardening offline template render harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/ssh_hardening/defaults/main.yml
+  tasks:
+    - name: render_output_path zorunludur
+      ansible.builtin.assert:
+        that:
+          - render_output_path is defined
+        fail_msg: "-e render_output_path=<path> ile bir çıktı dosyası verilmeli."
+
+    - name: Şablonu render et
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.template', '../roles/ssh_hardening/templates/managed-drop-in.conf.j2') }}"
+        dest: "{{ render_output_path }}"

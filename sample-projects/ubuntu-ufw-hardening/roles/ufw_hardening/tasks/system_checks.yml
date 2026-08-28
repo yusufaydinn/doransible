@@ -1,0 +1,79 @@
+---
+# roles/ufw_hardening/tasks/system_checks.yml
+#
+# Gerçek hedefe bağlı ön-koşul kontrolleri: passwordless sudo/root (ilk ve
+# TEK privileged gate), ufw binary'sinin varlığı, firewalld çakışması
+# (fail-closed) ve inventory SSH portunun geçerliliği. Bu dosya HİÇBİR
+# UFW yazma komutu çalıştırmaz, hiçbir kural eklemez/kaldırmaz, UFW'yi
+# enable/disable etmez.
+#
+# Sıra BİLEREK budur (README.md "Güvenli uygulama sırası" ile birebir
+# aynı tutulur):
+#   1. Passwordless sudo/root önkoşulu (become: true taşıyan İLK task).
+#      DORAnsible sudo yetkisi VERMEZ -- yalnız çalıştırmadan ÖNCE var
+#      olup olmadığını doğrular. Bu adım başarısızsa apply.yml'deki
+#      HİÇBİR UFW yazma komutu çalışmaz (uid_gate_assert.yml, ortak/tek
+#      kaynaklı assert -- ubuntu-ssh-hardening ile aynı desen).
+#   2. ufw binary mevcut ve çalıştırılabilir mi (root gerektirmez).
+#   3. firewalld çatışması yok mu (firewalld_gate_assert.yml, tek
+#      kaynaklı) -- firewalld aktifse veya durumu güvenle
+#      belirlenemiyorsa apply.yml'e hiç ulaşılmaz.
+#   4. Inventory SSH portu geçerli mi (ssh_port_gate_assert.yml, tek
+#      kaynaklı) -- bu kontrol GEÇMEDEN hiçbir UFW yazma komutu çalışmaz;
+#      geçerse validated port numarası apply.yml için set_fact ile
+#      sabitlenir.
+#
+# ubuntu-ssh-hardening/roles/ssh_hardening/tasks/system_checks.yml ile
+# AYNI check_mode: false istisna gerekçesi: bu task'lar salt-okunur ön-
+# koşul kontrolleridir ve check mode'da DA operatöre "ön-koşullar
+# sağlanıyor mu" bilgisini önizleme sırasında vermek için gerçekten
+# çalışması gerekir.
+
+- name: "UFW Hardening | Passwordless sudo/root önkoşulu (id -u, become ile, non-interaktif)"
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/id
+      - -u
+  become: true
+  check_mode: false
+  changed_when: false
+  register: ufw_hardening_uid_check
+
+- name: "UFW Hardening | UID=0 gate (ortak assert -- bkz. uid_gate_assert.yml)"
+  ansible.builtin.import_tasks: uid_gate_assert.yml
+
+- name: "UFW Hardening | ufw binary durumu (stat, root gerektirmez)"
+  ansible.builtin.stat:
+    path: /usr/sbin/ufw
+  register: ufw_hardening_binary_stat
+
+- name: "UFW Hardening | ufw binary mevcut ve çalıştırılabilir mi"
+  ansible.builtin.assert:
+    that:
+      - ufw_hardening_binary_stat.stat.exists
+      - ufw_hardening_binary_stat.stat.executable
+    fail_msg: >-
+      FAIL-CLOSED: /usr/sbin/ufw bulunamadı veya çalıştırılabilir değil
+      (exists={{ ufw_hardening_binary_stat.stat.exists }},
+      executable={{ ufw_hardening_binary_stat.stat.executable | default(false) }}).
+      UFW paketi kurulu olmayabilir; hiçbir UFW yazma komutu çalıştırılmadı.
+    success_msg: "COMPLIANT: /usr/sbin/ufw mevcut ve çalıştırılabilir."
+
+- name: "UFW Hardening | firewalld systemd durumu (çatışma kontrolü için, root gerektirmez)"
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - firewalld
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  environment:
+    LC_ALL: C
+  register: ufw_hardening_firewalld_status
+
+- name: "UFW Hardening | firewalld gate (ortak assert -- bkz. firewalld_gate_assert.yml)"
+  ansible.builtin.import_tasks: firewalld_gate_assert.yml
+
+- name: "UFW Hardening | SSH portu gate (ortak assert -- bkz. ssh_port_gate_assert.yml)"
+  ansible.builtin.import_tasks: ssh_port_gate_assert.yml

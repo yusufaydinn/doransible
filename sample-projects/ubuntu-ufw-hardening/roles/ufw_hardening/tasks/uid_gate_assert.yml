@@ -1,0 +1,34 @@
+---
+# roles/ufw_hardening/tasks/uid_gate_assert.yml
+#
+# TEK KAYNAKLI UID=0 assert task'ı (ubuntu-ssh-hardening/roles/
+# ssh_hardening/tasks/uid_gate_assert.yml ile BİREBİR aynı desen).
+# `system_checks.yml` (gerçek `id -u` çağrısından SONRA) VE offline test
+# harness'i (`tests/check_system_checks_gate.yml`, `become` gerektirmeyen
+# bir test-double komuttan SONRA) bu dosyayı `import_tasks` ile İTHAL
+# EDER -- assert koşulu VE fail_msg/success_msg metni yalnız BURADA
+# tanımlıdır, iki yerde AYRI AYRI YAZILMAZ.
+#
+# Bu, DORAnsible sudo yetkisi VERMEZ sözleşmesinin ilk ve TEK privileged
+# gate'idir: bu adım başarısızsa apply.yml'deki HİÇBİR UFW yazma komutu
+# çalışmaz (ne allow rule, ne default policy, ne logging, ne enable).
+#
+# Bu dosya kendisi HİÇBİR KOMUT ÇALIŞTIRMAZ: register edilen
+# `ufw_hardening_uid_check` değişkeninin (ve onun `.stdout` alanının)
+# çağıran tarafından ÖNCEDEN doldurulmuş olmasını VARSAYAR -- gerçek
+# `id -u` çağrısı (system_checks.yml) veya bir test-double (offline
+# harness) fark etmez, bu dosya İKİSİ İÇİN DE AYNI kararı verir.
+
+- name: "UFW Hardening | Root/sudo doğrulaması başarılı mı (gerçek UID=0)"
+  ansible.builtin.assert:
+    that:
+      - (ufw_hardening_uid_check.stdout | trim) == "0"
+    fail_msg: >-
+      FAIL-CLOSED: become sonrası gerçek UID 0 değil
+      (uid='{{ ufw_hardening_uid_check.stdout | trim }}'). Hedef
+      kullanıcının ÖNCEDEN parolasız (NOPASSWD) sudo/root yetkisine sahip
+      olması gerekir -- DORAnsible bu yetkiyi VERMEZ, yalnız çalıştırmadan
+      ÖNCE var olup olmadığını doğrular. Bu adım başarısızsa apply.yml'deki
+      HİÇBİR UFW yazma komutu (allow rule, default policy, logging, enable)
+      çalışmaz.
+    success_msg: "Root/sudo doğrulandı (uid=0); sonraki ön-koşul kontrollerine devam ediliyor."

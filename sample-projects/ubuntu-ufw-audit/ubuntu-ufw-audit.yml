@@ -1,0 +1,25 @@
+---
+# ubuntu-ufw-audit.yml
+#
+# Salt-okunur UFW (Uncomplicated Firewall) audit playbook'u. Hiçbir kural
+# ekleyip kaldırmaz, `ufw enable`/`disable` çalıştırmaz, servis restart/
+# reload etmez, hiçbir dosya yazmaz. Kapsam, sınırlar ve sudo gereksinimi
+# için README.md dosyasına bakın.
+#
+# become_method/become_user/become_flags AÇIKÇA pinlenir -- aynı
+# non-interactive sudo sözleşmesi ../ubuntu-ssh-hardening/ubuntu-ssh-hardening.yml
+# içinde kullanılır: play seviyesindeki `become: false` DEĞİŞMEZ; yalnızca
+# role içinde AÇIKÇA `become: true` taşıyan, root gerektiren salt-okunur
+# task'lar (bkz. roles/ufw_audit/tasks/main.yml) bu üç değeri MİRAS alır.
+# `become_flags: "-H -S -n"` içindeki `-n` (non-interactive) sudo'ya parola
+# gerekiyorsa PROMPT AÇMADAN doğrudan hata ile çıkmasını söyler.
+
+- name: Ubuntu UFW Baseline Audit
+  hosts: all
+  gather_facts: true
+  become: false
+  become_method: sudo
+  become_user: root
+  become_flags: "-H -S -n"
+  roles:
+    - ufw_audit

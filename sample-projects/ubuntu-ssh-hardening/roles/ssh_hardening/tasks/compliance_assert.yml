@@ -1,0 +1,156 @@
+---
+# roles/ssh_hardening/tasks/compliance_assert.yml
+#
+# Host'a bağlı olmayan SAF mantık: verilen bir `sshd -T`-şekilli kaynaktaki
+# (ssh_hardening_compliance_source.stdout_lines) değerleri baseline'a
+# karşı doğrular. apply.yml bunu RELOAD'DAN ÖNCE (stage_label="pre-reload",
+# BULGU2), post_verify.yml ise RELOAD'DAN SONRA (stage_label="post-reload")
+# çağırır -- ikisi de AYNI mantığı, farklı bir kaynak ve etiketle kullanır.
+# tests/check_compliance.yml bu dosyayı sahte (fixture) çıktıyla, gerçek
+# host/sudo gerektirmeden doğrudan import ederek test eder.
+#
+# Parametreler (import_tasks çağrısında `vars:` ile verilir):
+#   ssh_hardening_compliance_source       -> {stdout_lines: [...]} biçiminde
+#                                             bir register sonucu (gerçek ya
+#                                             da fixture'dan türetilmiş sahte)
+#   ssh_hardening_compliance_stage_label  -> mesajlarda kullanılan aşama adı
+#                                             (örn. "pre-reload"/"post-reload")
+#
+# LIVE-AUDIT-FIX2: canlı bir normal-mode koşusunda, hedefte sözlüksel
+# olarak daha erken sıralanan başka bir drop-in (`00-ansible-hardening.conf`)
+# `MaxAuthTries 3` uyguluyordu -- audit açısından DAHA SIKI ve tamamen
+# uyumlu bir değer. Eski EXACT `== "6"` kontrolü bunu yanlışlıkla
+# NON-COMPLIANT sayıp candidate'i geri aldı. Düzeltme: iki alan sınıfı artık
+# AYRI değerlendirilir, ubuntu-ssh-audit (roles/ssh_audit/tasks/checks.yml)
+# ile BİREBİR AYNI semantikle:
+#   - ssh_hardening_baseline_fields_exact (8 boolean/enum alan): tam string
+#     eşitliği -- ikili durumlar arasında "daha sıkı" diye bir sıralama
+#     yoktur, bu yüzden exact doğru semantiktir. Değişmedi.
+#   - MaxAuthTries: saf pozitif tam sayı, 1..ssh_hardening_max_auth_tries_max
+#     arasındaysa COMPLIANT (audit'teki "MaxAuthTries geçerli ve üst sınırın
+#     altında mı" task'ıyla birebir aynı).
+#   - LoginGraceTime: ayrıştırılabilir (saniye veya tek harfli s/m/h/d/w
+#     birim sonekli), sınırsız (0) OLMAYAN ve saniye karşılığı
+#     0 < x <= ssh_hardening_login_grace_time_max_seconds ise COMPLIANT
+#     (audit'teki "LoginGraceTime geçerli, sınırsız değil ve üst sınırın
+#     altında mı" task'ıyla birebir aynı ayrıştırma).
+# Template hâlâ güvenli varsayılan olarak MaxAuthTries 6 / LoginGraceTime 60
+# YAZAR (bkz. defaults/main.yml, templates/managed-drop-in.conf.j2); bu
+# değişiklik yalnız DOĞRULAMA tarafının, önde sıralanan başka bir drop-in'in
+# yazdığı DAHA SIKI bir değeri yanlışlıkla reddetmemesi içindir.
+#
+# BU DOSYA KENDİSİ ASLA `fail`/hard-assert ile PLAY'İ DURDURMAZ (BULGU1/2
+# ile aynı "failure-atomic" ilke): tüm alan kontrolleri ignore_errors:true
+# ile çalışır, sonuç tek bir ssh_hardening_compliance_failed boolean
+# fact'ine indirgenir. Play'i durdurup durdurmamaya ve varsa rollback'e
+# ÇAĞIRAN karar verir (apply.yml: pre-reload'da rollback tetikler;
+# post_verify.yml: post-reload'da yalnız hata ile durur, ikinci bir
+# otomatik yazma denemez -- trusted-operator güvenlik modeli).
+#
+# ssh_audit'teki gibi: bir alan uygunsuz olsa bile döngü/sıradaki kontrol
+# durmaz, tüm alanlar değerlendirilir; operatöre TEK seferde tam tablo
+# verilir.
+
+- name: "SSH Hardening | Exact (boolean/enum) alanlar audit baseline'ına tam uyuyor mu ({{ ssh_hardening_compliance_stage_label }})"
+  vars:
+    ssh_hardening_field_lines: "{{ ssh_hardening_compliance_source.stdout_lines | select('match', '^' ~ item.key ~ '(\\s|$)') | list }}"
+    ssh_hardening_field_line: "{{ (ssh_hardening_field_lines + [item.key ~ ' unset'])[0] }}"
+    ssh_hardening_field_value: "{{ (ssh_hardening_field_line.split(None, 1) + [''])[1] }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_field_lines | length == 1
+      - ssh_hardening_field_value == (item.expected | string)
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED ({{ ssh_hardening_compliance_stage_label }}): {{ item.key }} sshd -T
+      çıktısında {{ ssh_hardening_field_lines | length }} kez görüldü
+      (1 bekleniyor), değer='{{ ssh_hardening_field_value }}',
+      beklenen='{{ item.expected }}'.
+    success_msg: "COMPLIANT ({{ ssh_hardening_compliance_stage_label }}): {{ item.key }}={{ ssh_hardening_field_value }}."
+  loop: "{{ ssh_hardening_baseline_fields_exact }}"
+  loop_control:
+    label: "{{ item.key }}"
+  ignore_errors: true
+  register: ssh_hardening_compliance_exact_results
+
+- name: "SSH Hardening | MaxAuthTries üst-sınırlı (bounded) politikaya uyuyor mu ({{ ssh_hardening_compliance_stage_label }})"
+  # ssh_audit'teki "MaxAuthTries geçerli ve üst sınırın altında mı"
+  # task'ıyla (roles/ssh_audit/tasks/checks.yml) BİREBİR aynı mantık. Alt
+  # sınır (>=1) audit'teki gibi sabit/literal'dır, ayrı bir değişken
+  # taşımaz.
+  vars:
+    ssh_hardening_mat_field: "{{ ssh_hardening_baseline_fields_numeric | selectattr('key', 'equalto', 'maxauthtries') | first }}"
+    ssh_hardening_mat_lines: "{{ ssh_hardening_compliance_source.stdout_lines | select('match', '^maxauthtries(\\s|$)') | list }}"
+    ssh_hardening_mat_line: "{{ (ssh_hardening_mat_lines + ['maxauthtries unset'])[0] }}"
+    ssh_hardening_mat_value: "{{ (ssh_hardening_mat_line.split(None, 1) + [''])[1] }}"
+    ssh_hardening_mat_numeric: "{{ ssh_hardening_mat_value is match('^[0-9]+$') }}"
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_mat_lines | length == 1
+      - ssh_hardening_mat_numeric
+      - ssh_hardening_mat_value | int >= 1
+      - ssh_hardening_mat_value | int <= (ssh_hardening_mat_field.max | int)
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED ({{ ssh_hardening_compliance_stage_label }}): maxauthtries sshd -T
+      çıktısında {{ ssh_hardening_mat_lines | length }} kez görüldü (1 bekleniyor),
+      değer='{{ ssh_hardening_mat_value }}' (1..{{ ssh_hardening_mat_field.max }}
+      arası pozitif tam sayı bekleniyor; 0, eksik, duplicate veya geçersiz/
+      bozuk bir değer kabul edilmez).
+    success_msg: "COMPLIANT ({{ ssh_hardening_compliance_stage_label }}): maxauthtries={{ ssh_hardening_mat_value }}."
+  ignore_errors: true
+  register: ssh_hardening_compliance_max_auth_tries_result
+
+- name: "SSH Hardening | LoginGraceTime üst-sınırlı (bounded) politikaya uyuyor mu ({{ ssh_hardening_compliance_stage_label }})"
+  # ssh_audit'teki "LoginGraceTime geçerli, sınırsız değil ve üst sınırın
+  # altında mı" task'ıyla (roles/ssh_audit/tasks/checks.yml) BİREBİR aynı
+  # ayrıştırma/karşılaştırma mantığı: sshd -T LoginGraceTime'ı normalde
+  # saniye tam sayısı olarak yazar; bazı araçlar/sürümler "10m", "1h", "3w"
+  # gibi tek birimli sshd_config zaman biçimlerini de üretebilir. Saniye ve
+  # desteklenen tek birimli (s/m/h/d/w) biçimler saniyeye çevrilir. Bileşik
+  # biçimler (örn. "1h30m") ve tanınmayan biçimler ayrıştırılamaz sayılır ve
+  # fail-closed geçersiz kabul edilir. 0 (sınırsız bekleme süresi) her
+  # zaman NON-COMPLIANT'tır. Not: regex_search'ün grup/index sonucuna ASLA
+  # erişilmez -- yalnız boolean `is match` testi ve güvenli string slicing
+  # (`[-1:]`, `[:-1]`, boş dizide bile ASLA istisna atmaz) kullanılır.
+  vars:
+    ssh_hardening_lgt_field: "{{ ssh_hardening_baseline_fields_numeric | selectattr('key', 'equalto', 'logingracetime') | first }}"
+    ssh_hardening_lgt_lines: "{{ ssh_hardening_compliance_source.stdout_lines | select('match', '^logingracetime(\\s|$)') | list }}"
+    ssh_hardening_lgt_line: "{{ (ssh_hardening_lgt_lines + ['logingracetime unset'])[0] }}"
+    ssh_hardening_lgt_value: "{{ (ssh_hardening_lgt_line.split(None, 1) + [''])[1] }}"
+    ssh_hardening_lgt_valid_format: "{{ ssh_hardening_lgt_value is match('^[0-9]+[a-zA-Z]?$') }}"
+    ssh_hardening_lgt_has_unit_suffix: "{{ ssh_hardening_lgt_valid_format and (ssh_hardening_lgt_value[-1:] is match('^[a-zA-Z]$')) }}"
+    ssh_hardening_lgt_unit: "{{ (ssh_hardening_lgt_value[-1:] | lower) if ssh_hardening_lgt_has_unit_suffix else '' }}"
+    ssh_hardening_lgt_number: "{{ ((ssh_hardening_lgt_value[:-1] if ssh_hardening_lgt_has_unit_suffix else ssh_hardening_lgt_value) | int) if ssh_hardening_lgt_valid_format else 0 }}"
+    ssh_hardening_lgt_unit_multiplier: >-
+      {{ 1 if ssh_hardening_lgt_unit in ['', 's'] else
+         60 if ssh_hardening_lgt_unit == 'm' else
+         3600 if ssh_hardening_lgt_unit == 'h' else
+         86400 if ssh_hardening_lgt_unit == 'd' else
+         604800 if ssh_hardening_lgt_unit == 'w' else
+         -1 }}
+    ssh_hardening_lgt_seconds: >-
+      {{ ((ssh_hardening_lgt_number | int) * (ssh_hardening_lgt_unit_multiplier | int))
+         if (ssh_hardening_lgt_valid_format and (ssh_hardening_lgt_unit_multiplier | int) >= 0)
+         else -1 }}
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_lgt_lines | length == 1
+      - ssh_hardening_lgt_valid_format
+      - ssh_hardening_lgt_unit_multiplier | int >= 0
+      - ssh_hardening_lgt_seconds | int > 0
+      - ssh_hardening_lgt_seconds | int <= (ssh_hardening_lgt_field.max_seconds | int)
+    fail_msg: >-
+      NON-COMPLIANT/FAIL-CLOSED ({{ ssh_hardening_compliance_stage_label }}): logingracetime sshd -T
+      çıktısında {{ ssh_hardening_lgt_lines | length }} kez görüldü (1 bekleniyor),
+      ham değer='{{ ssh_hardening_lgt_value }}',
+      hesaplanan={{ 'ayrıştırılamadı' if ssh_hardening_lgt_seconds | int < 0 else (ssh_hardening_lgt_seconds ~ 's') }},
+      üst sınır={{ ssh_hardening_lgt_field.max_seconds }}s (0 sınırsızdır ve kabul edilmez).
+    success_msg: "COMPLIANT ({{ ssh_hardening_compliance_stage_label }}): logingracetime={{ ssh_hardening_lgt_value }} (~{{ ssh_hardening_lgt_seconds }}s)."
+  ignore_errors: true
+  register: ssh_hardening_compliance_login_grace_time_result
+
+- name: "SSH Hardening | Compliance sonucunu normalize et ({{ ssh_hardening_compliance_stage_label }})"
+  ansible.builtin.set_fact:
+    ssh_hardening_compliance_failed: >-
+      {{ (ssh_hardening_compliance_exact_results.results | selectattr('failed', 'defined') | selectattr('failed') | list | length > 0)
+         or (ssh_hardening_compliance_max_auth_tries_result.failed | default(false))
+         or (ssh_hardening_compliance_login_grace_time_result.failed | default(false)) }}

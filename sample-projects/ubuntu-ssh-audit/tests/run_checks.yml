@@ -1,0 +1,33 @@
+---
+# tests/run_checks.yml
+#
+# Offline regresyon koşucusu: gerçek bir host, SSH bağlantısı veya sudo
+# gerektirmeden roles/ssh_audit/tasks/checks.yml mantığını sahte (fixture)
+# bir `sshd -T` çıktısı üzerinde çalıştırır. `fixture_path` extra-var'ı
+# zorunludur; sonuç, run_offline_tests.sh tarafından ansible-playbook'un
+# çıkış koduna (0=compliant, 0-dışı=non-compliant/hata) bakılarak
+# değerlendirilir.
+#
+# Bu dosya gerçek ürünün bir parçası değildir; yalnızca test amaçlıdır ve
+# gerçek project olarak kaydedilmesi beklenmez.
+
+- name: Ubuntu SSH Audit offline check regression harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/ssh_audit/defaults/main.yml
+  vars:
+    ssh_audit_raw_stdout: "{{ lookup('file', fixture_path) }}"
+    ssh_audit_sshd_t:
+      stdout: "{{ ssh_audit_raw_stdout }}"
+      stdout_lines: "{{ ssh_audit_raw_stdout.split('\n') }}"
+  tasks:
+    - name: fixture_path zorunludur
+      ansible.builtin.assert:
+        that:
+          - fixture_path is defined
+        fail_msg: "-e fixture_path=<path> ile bir sshd -T fixture dosyası verilmeli."
+
+    - name: ssh_audit kontrollerini fixture üzerinde çalıştır
+      ansible.builtin.import_tasks: ../roles/ssh_audit/tasks/checks.yml

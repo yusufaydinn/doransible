@@ -1,0 +1,27 @@
+---
+# tests/check_ssh_port_gate.yml
+#
+# Offline: roles/ufw_hardening/tasks/ssh_port_gate_assert.yml SAF
+# mantığını çalıştırır. Gerçek host/sudo gerekmez.
+#
+# `ansible_port` burada BİLEREK bir play `vars:` girdisi olarak
+# TANIMLANMAZ -- ubuntu-ufw-audit/tests/run_offline_tests.sh'deki AYNI
+# gerekçeyle: `ansible_port` Ansible'ın ÖZEL bir bağlantı anahtarıdır;
+# testler bunu doğrudan `-e ansible_port=<değer>` ile verir (verilmezse
+# gerçekten TANIMSIZ kalır ve gate'in `default(22)` dalı çalışır).
+# `-e ansible_port=notanumber` gibi sayıya çevrilemeyen bir değer, bu
+# role'ün kendi task'larından biri bile çalışmadan, Ansible'ın kendi
+# bağlantı katmanı tarafından reddedilir (bkz. README.md "Offline
+# testler").
+
+- name: UFW Hardening offline SSH-port-gate harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: SSH portu gate'ini çalıştır
+      ansible.builtin.import_tasks: ../roles/ufw_hardening/tasks/ssh_port_gate_assert.yml
+
+    - name: "[TEST MARKER] apply.yml buraya kadar ulaşılırsa çalışırdı"
+      ansible.builtin.debug:
+        msg: "APPLY_CHAIN_WOULD_RUN (port={{ ufw_hardening_ssh_port_numeric }})"

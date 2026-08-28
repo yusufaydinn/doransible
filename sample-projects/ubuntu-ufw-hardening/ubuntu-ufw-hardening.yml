@@ -1,0 +1,45 @@
+---
+# ubuntu-ufw-hardening.yml
+#
+# UFW remediation playbook'u. ubuntu-ufw-audit'in denetlediği varsayılan
+# profili uygular: SSH portu için TCP allow kuralı (enable'dan ÖNCE),
+# default incoming=deny/outgoing=allow/routed=deny, logging=low, UFW
+# enable. Güvenli uygulama sırası, fail-closed sistem önkoşulları, check/normal
+# mode farkı, lockout riski ve sınırlar için README.md dosyasına bakın.
+#
+# BULGU3 (AUDIT-FIX1) -- fleet abort sözleşmesi: `serial: 1` TEK BAŞINA
+# yalnız BATCH BÜYÜKLÜĞÜDÜR -- bir host'ta unhandled bir hata olduğunda
+# Ansible'ın kalan host'lara devam ETMEMESİNİ tek başına GARANTİ ETMEZ.
+# Bu garanti `serial: 1` + `any_errors_fatal: true` BİRLEŞİMİNDEN gelir:
+# `any_errors_fatal: true`, herhangi bir host'ta (preflight/apply/reverify/
+# reconnect zincirinin herhangi bir adımında) unhandled bir hata oluşursa
+# TÜM play'in ORADA sonlanmasını, henüz sırası gelmemiş diğer host'ların
+# İŞLENMEDEN kalmasını sağlar. Bu, otomatik rollback DEĞİLDİR -- zaten
+# işlenmiş host'larda yapılan değişiklikler geri alınmaz (bkz. README.md
+# "Lockout ve rollback sınırı"); yalnız kalan host'ları KORUR.
+#
+# become_method/become_user/become_flags AÇIKÇA, play seviyesinde
+# pinlenir (ubuntu-ssh-hardening.yml ile BİREBİR aynı sözleşme):
+#   - Play seviyesindeki `become: false` DEĞİŞMEZ -- task'lar OTOMATİK
+#     olarak privilege escalation KAZANMAZ.
+#   - AÇIKÇA `become: true` taşıyan HER task (system_checks.yml/apply.yml
+#     içinde birden fazla task var) bu üç değeri MİRAS alır.
+#   - `become: true` TAŞIMAYAN task'lar (profile_lock_check.yml,
+#     os_check.yml gibi salt-okunur/local kontroller) etkilenmez.
+# `become_flags: "-H -S -n"` içindeki `-n` (non-interactive) sudo'ya
+# "parola gerekiyorsa PROMPT AÇMA, doğrudan hata ile çık" talimatını
+# verir -- DORAnsible bugün bir become-parolası credential'ı saklamaz;
+# hedef kullanıcının ÖNCEDEN parolasız (NOPASSWD) sudo'ya sahip olması
+# gerekir (bkz. README.md "Passwordless sudo gereksinimi").
+
+- name: Ubuntu UFW Hardening
+  hosts: all
+  gather_facts: true
+  become: false
+  become_method: sudo
+  become_user: root
+  become_flags: "-H -S -n"
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - ufw_hardening

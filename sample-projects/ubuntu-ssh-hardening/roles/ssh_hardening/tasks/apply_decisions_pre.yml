@@ -1,0 +1,19 @@
+---
+# roles/ssh_hardening/tasks/apply_decisions_pre.yml
+#
+# SAF karar mantığı (host'a bağlı değildir, hiçbir gerçek komut çalıştırmaz):
+# apply.yml'deki template ve aday `sshd -t` task'larının ZATEN register
+# ettiği ham sonuçları (ssh_hardening_apply, ssh_hardening_candidate_verify)
+# okuyup normalize eder. tests/check_apply_decisions.yml bu dosyayı gerçek
+# bir hedef olmadan, SİMÜLE EDİLMİŞ register-şekilli değişkenlerle
+# doğrudan import ederek test eder (BULGU1 regresyon kanıtı).
+
+- name: "SSH Hardening | Apply sonucunu normalize et (check-mode/skip güvenli)"
+  ansible.builtin.set_fact:
+    ssh_hardening_apply_changed: "{{ ssh_hardening_apply.changed | default(false) }}"
+    ssh_hardening_had_backup: "{{ (ssh_hardening_apply.backup_file | default('')) | length > 0 }}"
+    ssh_hardening_backup_path: "{{ ssh_hardening_apply.backup_file | default('') }}"
+
+- name: "SSH Hardening | Aday sshd -t (syntax) sonucunu normalize et (check-mode/skip güvenli)"
+  ansible.builtin.set_fact:
+    ssh_hardening_candidate_verify_failed: "{{ (ssh_hardening_candidate_verify.rc | default(0)) | int != 0 }}"

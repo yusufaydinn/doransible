@@ -1,0 +1,36 @@
+---
+# tests/check_post_verify_gate.yml
+#
+# Davranışsal kanıt (ubuntu-ssh-hardening/tests/check_post_verify_gate.yml
+# ile AYNI desen): roles/ufw_hardening/tasks/main.yml'in post_verify.yml'i
+# dahil eden GERÇEK task'ını (adı, `when:` ifadesi ve `include_tasks`
+# modülü BİREBİR aynı) çoğaltan bir harness. Amaç: `meta:
+# reset_connection`'ın kendi üzerinde bir `when:` koşulunu desteklemediği
+# ve bu yüzden check-mode korumasının task-seviyesi bir `when:` yerine
+# main.yml'deki `include_tasks`'ın DINAMIK atlamasıyla sağlandığını
+# offline ama DAVRANIŞSAL olarak (gerçek `ansible-playbook` çıktısı
+# üzerinden, `ansible_check_mode`'u sahte bir değişkenle TAKLİT ETMEDEN,
+# gerçek `--check` bayrağıyla) kanıtlamak.
+#
+# BULGU1/AUDIT-FIX1: main.yml'deki gerçek `when:` artık İKİ koşul taşır --
+# `not ansible_check_mode` VE `ufw_hardening_any_change | default(false)`.
+# Bu harness ikisini de BİREBİR çoğaltır; `ufw_hardening_any_change`
+# varsayılan olarak `true`dur ("bir değişiklik uygulandı" senaryosu) ve
+# `-e ufw_hardening_any_change=false` ile override edilerek "hiçbir
+# değişiklik uygulanmadı" (idempotent ikinci çalıştırma) senaryosu ayrıca
+# test edilir.
+
+- name: UFW Hardening offline post_verify include-gate harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/ufw_hardening/defaults/main.yml
+  vars:
+    ufw_hardening_any_change: "{{ fake_any_change | default(true) }}"
+  tasks:
+    - name: "UFW Hardening | Reload sonrası bağlantı/lockout doğrulaması"
+      ansible.builtin.include_tasks: ../roles/ufw_hardening/tasks/post_verify.yml
+      when:
+        - not ansible_check_mode
+        - ufw_hardening_any_change | default(false)

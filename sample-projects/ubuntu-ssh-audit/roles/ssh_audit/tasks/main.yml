@@ -1,0 +1,46 @@
+---
+# roles/ssh_audit/tasks/main.yml
+#
+# Salt-okunur SSH audit. Hiçbir task dosya değiştirmez, paket kurmaz veya
+# servis restart/reload etmez. Detaylar için ../../../README.md.
+#
+# Fail-closed sözleşmesi: her kontrol, okuduğu sshd -T alanının **tam
+# olarak bir kez** göründüğünü ve tanınan bir değer taşıdığını önce
+# doğrular. Alan eksikse, birden fazla kez görülmüşse (duplicate) veya
+# beklenmeyen bir değer taşıyorsa kontrol NON-COMPLIANT sayılır; boş veya
+# ayrıştırılamayan bir değer hiçbir zaman sessizce compliant kabul edilmez.
+
+- name: "SSH Audit | Desteklenen Ubuntu sürümünü doğrula"
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == "Ubuntu"
+      - ansible_facts.distribution_version in ssh_audit_supported_ubuntu_versions
+    fail_msg: >-
+      UNSUPPORTED: {{ ansible_facts.distribution | default('bilinmeyen dağıtım') }}
+      {{ ansible_facts.distribution_version | default('') }} desteklenmiyor. Bu
+      audit yalnızca Ubuntu {{ ssh_audit_supported_ubuntu_versions | join(', ') }}
+      için tasarlandı; sonraki kontroller çalıştırılmadı.
+    success_msg: >-
+      Desteklenen sürüm: Ubuntu {{ ansible_facts.distribution_version }}.
+
+- name: "SSH Audit | Global/default sshd yapılandırmasını oku (sshd -T)"
+  # check_mode: false -> Check kipinde bile bu salt-okunur komutun gerçekten
+  # çalışmasını sağlar (subprocess güvenlik sözleşmesi). command modülü hiçbir
+  # dosya/servis durumu değiştirmez;
+  # argümanlar sabit bir listedir, kullanıcı girdisinden birleştirilmez.
+  #
+  # `-C` (bağlantı bağlamı: user/host/addr/laddr/lport) BİLEREK verilmez:
+  # bu dilimde context sistemi veya sshd_config taraması yok. Bu yüzden
+  # çıktı yalnızca GLOBAL/DEFAULT baseline'dır; `Match` bloklarının koşullu
+  # geçersiz kılmaları bu okumaya YANSIMAZ (bkz. README.md "Sınırlar").
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -T
+  become: true
+  check_mode: false
+  changed_when: false
+  register: ssh_audit_sshd_t
+
+- name: "SSH Audit | Kontrolleri değerlendir"
+  ansible.builtin.import_tasks: checks.yml

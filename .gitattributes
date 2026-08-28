@@ -1,0 +1,4 @@
+# Generated office documents and report images are binary artifacts.
+*.docx binary
+*.pdf binary
+*.png binary

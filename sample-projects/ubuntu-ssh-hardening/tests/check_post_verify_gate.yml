@@ -1,0 +1,41 @@
+---
+# tests/check_post_verify_gate.yml
+#
+# LIVE-AUDIT-FIX1: davranışsal kanıt -- `roles/ssh_hardening/tasks/
+# main.yml`'in post_verify.yml'i dahil eden GERÇEK task'ını (adı, `when:`
+# ifadesi ve `include_tasks` modülü BİREBİR aynı) çoğaltan bir harness.
+# Amaç: `meta: reset_connection`'ın kendi üzerinde bir `when:` koşulunu
+# desteklemediği (bkz. post_verify.yml ve README.md'deki "check mode'da
+# reset_connection çalışmaması nasıl sağlanıyor" notu) ve bu yüzden
+# check mode/aday-başarısız korumasının task-seviyesi bir `when:` yerine
+# main.yml'deki `include_tasks`'ın DINAMIK atlamasıyla sağlandığını
+# offline ama DAVRANIŞSAL olarak (gerçek ansible-playbook çıktısı
+# üzerinden, `ansible_check_mode`'u sahte bir değişkenle TAKLİT ETMEDEN,
+# gerçek `--check` bayrağıyla) kanıtlamak.
+#
+# `ssh_hardening_candidate_failed` fake_candidate_failed ile sürülür
+# (gerçek apply.yml'in normalize ettiği bayrağın taklidi); bu dosya
+# apply.yml'i ÇAĞIRMAZ, yalnız main.yml'in bu tek task'ının gate
+# mantığını izole eder.
+#
+# Not: normal-mode başarılı aday yolunda (`fake_candidate_failed=false`,
+# `--check` YOK) zincir gerçekten `include_tasks` ile açılır ve
+# `reset_connection` + `wait_for_connection` (yerel bağlantıda hızla
+# başarılı) çalışır; ardından post-reload `sshd -T` become gerektirdiği
+# için bu sandbox'ta sudo parolası olmadan başarısız olur -- bu BEKLENEN
+# ve bu testin kapsamı DIŞINDADIR (gerçek hedef/sudo gerektiren kısım
+# README.md "Sınırlar"da zaten dürüstçe belirtilmiştir). Bu harness
+# yalnızca INCLUDE'un tetiklenip tetiklenmediğini ölçer.
+
+- name: SSH Hardening offline post_verify include-gate harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/ssh_hardening/defaults/main.yml
+  vars:
+    ssh_hardening_candidate_failed: "{{ fake_candidate_failed | default(false) }}"
+  tasks:
+    - name: "SSH Hardening | Reload sonrası effective doğrulama"
+      ansible.builtin.include_tasks: ../roles/ssh_hardening/tasks/post_verify.yml
+      when: not ansible_check_mode and not ssh_hardening_candidate_failed

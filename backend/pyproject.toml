@@ -1,0 +1,114 @@
+[project]
+name = "doransible-backend"
+version = "0.1.0"
+description = "DORAnsible backend - FastAPI tabanlı Ansible yönetim API'si"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14.0",
+    # T-202: inventory dosyaları Ansible'ın kendi parser'ıyla okunur. `ansible-core`
+    # `ansible-inventory` komutunu sağlar; uygulama onu ayrı bir süreç olarak
+    # çağırır (ADR-017). Backend bağımlılık yığınında zaten tanımlıdır ve
+    # EPIC 3-4'te `ansible-playbook`/`--syntax-check` için de gerekecektir.
+    #
+    # DİKKAT: Ansible, Windows'u control node olarak DESTEKLEMEZ. Paket
+    # Windows'a kurulur ancak CLI ve kütüphane POSIX'e özgü modüllere
+    # (`grp`, `os.get_blocking`) bağlıdır. Windows'ta parser çağrısı
+    # 503 `inventory_parser_unavailable` üretir; uygulamanın geri kalanı çalışır.
+    "ansible-core>=2.16",
+    # EPIC 3A: playbook execution backend'i (ADR-001). Alt sınır 2.4.3'tür; bu,
+    # ölçümün yapıldığı ve Python 3.12 classifier'ı taşıyan güncel stabil
+    # sürümdür (pre-release kullanılmaz).
+    #
+    # Üst sınır ÖLÇÜLEN SERİYE bağlıdır, SemVer vaadine değil. Kapı A-D
+    # sonuçlarının tamamı 2.4.x üzerinde ölçülmüştür; environment miras
+    # davranışı, `artifacts/<uuid>/command` içeriği, host key varsayılanı ve
+    # süreç ağacı/session yapısı Runner'ın iç davranışlarıdır ve minor sürümde
+    # değişebilir. Sınırın genişletilmesi, ölçümlerin yeni seri üzerinde
+    # tekrarlanmasını gerektirir.
+    #
+    # DİKKAT: Runner, kendisini başlatan sürecin environment'ını MİRAS ALIR;
+    # `env/envvars` bu environment'ın YERİNE geçmez, üzerine EKLER. Bu yüzden
+    # Runner asla API prosesinin environment'ıyla çağrılmaz; ayrı bir child
+    # process'te, allowlist ile sıfırdan kurulmuş environment ile çalıştırılır
+    # (ADR-021 Kapı A).
+    "ansible-runner>=2.4.3,<2.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "httpx>=0.27.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+# Vulnerability audit tooling. Bilerek `dev` dışında ve requirements.lock.txt
+# dışında tutulur: audit aracı ve advisory veritabanı her zaman güncel olmalıdır,
+# pinlenmiş bir sürüm yeni CVE'leri sessizce kaçırır (GUVENLIK.md bölüm 12).
+audit = [
+    "pip-audit>=2.10",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.ruff.lint.isort]
+# Backend kökündeki `alembic/` dizini paket adını gölgeler; `alembic` import'u
+# yerel dizin değil, third-party kütüphanedir.
+known-third-party = ["alembic"]
+
+# ---------------------------------------------------------------------------
+# Mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["app", "tests"]
+exclude = ["^alembic/"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["uvicorn.*"]
+ignore_missing_imports = true
+
+# `ansible-runner` 2.4.3 `py.typed` işaretçisi taşımaz ve stub paketi yoktur.
+[[tool.mypy.overrides]]
+module = ["ansible_runner.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+markers = [
+    "runner_gate: ADR-021 Kapı A-D ölçüm probe'ları. Gerçek ansible-runner ve gerçek süreçler kullanır; yalnız localhost ve ansible_connection=local, SSH/network yok.",
+]

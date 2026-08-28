@@ -1,0 +1,15 @@
+port 22
+protocol 2
+permitrootlogin yes
+passwordauthentication yes
+pubkeyauthentication yes
+permitemptypasswords yes
+kbdinteractiveauthentication no
+x11forwarding yes
+allowagentforwarding no
+allowtcpforwarding no
+maxauthtries 10
+logingracetime 120
+ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
+macs hmac-sha2-256-etm@openssh.com
+kexalgorithms curve25519-sha256

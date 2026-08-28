@@ -1,0 +1,55 @@
+---
+# roles/ufw_hardening/tasks/firewalld_gate_assert.yml
+#
+# TEK KAYNAKLI firewalld fail-closed gate. Host'a bağlı olmayan SAF
+# mantık: register edilen `ufw_hardening_firewalld_status` değişkeninin
+# (`.rc`/`.stdout`) çağıran tarafından ÖNCEDEN doldurulmuş olmasını
+# VARSAYAR -- gerçek `systemctl is-active firewalld` çağrısı
+# (system_checks.yml) veya sahte bir register (offline harness) fark
+# etmez, bu dosya İKİSİ İÇİN DE AYNI kararı verir.
+#
+# ubuntu-ufw-audit/roles/ufw_audit/tasks/checks.yml'deki AYNI karar
+# matrisi (rc + stdout BİRLİKTE değerlendirilir), ama orada
+# `ignore_errors: true` ile salt raporlanan bir bulgudur; BURADA HARD
+# GATE'tir -- sapma varsa `system_checks.yml`'i çağıran play bu host için
+# burada durur, apply.yml'e hiç ulaşılmaz, hiçbir UFW yazma komutu
+# çalıştırılmaz. Kabul edilen TEK güvenli kombinasyonlar: rc=3/stdout=
+# inactive veya rc=4/stdout=inactive|unknown; bunların dışındaki her
+# rc/stdout kombinasyonu (command hatası, izin/bus hatası, rc/stdout
+# çelişkisi, boş veya tanınmayan stdout, "failed"/"activating"/
+# "reloading" gibi geçiş durumları) fail-closed sayılır -- asla sessizce
+# compliant kabul edilmez.
+#
+# tests/check_firewalld_gate.yml bu dosyayı gerçek bir hedef/systemctl
+# olmadan, sahte bir `ufw_hardening_firewalld_status` register'ıyla
+# doğrudan import ederek test eder.
+
+- name: "UFW Hardening | firewalld çakışması yok mu (fail-closed, rc + stdout birlikte) -- HARD GATE"
+  vars:
+    ufw_hardening_firewalld_stdout: "{{ (ufw_hardening_firewalld_status.stdout | default('')) | trim }}"
+    ufw_hardening_firewalld_rc_raw: "{{ ufw_hardening_firewalld_status.rc | default(-1) }}"
+    ufw_hardening_firewalld_rc_valid_format: "{{ (ufw_hardening_firewalld_rc_raw | string) is match('^-?[0-9]+$') }}"
+    ufw_hardening_firewalld_rc_value: "{{ ((ufw_hardening_firewalld_rc_raw | string) | int) if ufw_hardening_firewalld_rc_valid_format else -999 }}"
+    ufw_hardening_firewalld_is_active: "{{ ufw_hardening_firewalld_stdout == 'active' }}"
+    ufw_hardening_firewalld_is_recognized_safe: "{{ (ufw_hardening_firewalld_rc_value == 3 and ufw_hardening_firewalld_stdout == 'inactive') or (ufw_hardening_firewalld_rc_value == 4 and ufw_hardening_firewalld_stdout in ['inactive', 'unknown']) }}"
+  ansible.builtin.assert:
+    that:
+      - not ufw_hardening_firewalld_is_active
+      - ufw_hardening_firewalld_is_recognized_safe
+    fail_msg: >-
+      {{
+        "FAIL-CLOSED: firewalld aktif (systemctl is-active firewalld rc="
+        ~ ufw_hardening_firewalld_rc_raw ~ ", stdout='" ~ ufw_hardening_firewalld_stdout
+        ~ "'); UFW ile aynı anda çalışan firewalld beklenmeyen/çelişkili kural"
+        ~ " davranışına yol açabilir. Hiçbir UFW yazma komutu çalıştırılmadı."
+        if ufw_hardening_firewalld_is_active else
+        "FAIL-CLOSED: firewalld durumu güvenle inactive/kurulu-değil olarak doğrulanamadı (rc="
+        ~ ufw_hardening_firewalld_rc_raw ~ ", stdout='" ~ ufw_hardening_firewalld_stdout
+        ~ "'). Kabul edilen tek güvenli kombinasyonlar: rc=3/stdout=inactive veya "
+        ~ "rc=4/stdout=inactive|unknown (bkz. README.md \"Firewalld karar matrisi\"); "
+        ~ "bunların dışındaki her kombinasyon fail-closed sayılır. Hiçbir UFW yazma"
+        ~ " komutu çalıştırılmadı."
+      }}
+    success_msg: >-
+      COMPLIANT: firewalld güvenle inactive/kurulu-değil
+      (rc={{ ufw_hardening_firewalld_rc_raw }}, stdout='{{ ufw_hardening_firewalld_stdout }}').

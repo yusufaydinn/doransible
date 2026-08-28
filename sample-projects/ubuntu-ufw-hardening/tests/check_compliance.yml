@@ -1,0 +1,43 @@
+---
+# tests/check_compliance.yml
+#
+# Offline: roles/ufw_hardening/tasks/compliance_reverify.yml mantığını
+# sahte (fixture) bir `ufw status verbose` çıktısı VE bir `/etc/default/ufw`
+# içeriğiyle çalıştırır. Gerçek bir SSH hostu, bağlantı, sudo veya UFW
+# gerektirmez. `status_fixture_path` ve `default_ufw_fixture_path`
+# extra-var'ları zorunludur; `port` opsiyoneldir (varsayılan 22).
+#
+# compliance_reverify.yml hard-fail ETMEZ (yalnız
+# ufw_hardening_reverify_failed set_fact üretir); bu harness sonucu KENDİSİ
+# bir `fail` task'ıyla dışa vurur -- gerçek apply.yml'in yaptığı gibi.
+
+- name: UFW Hardening offline reverify harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/ufw_hardening/defaults/main.yml
+  vars:
+    ufw_hardening_reverify_status_raw_stdout: "{{ lookup('file', status_fixture_path) }}"
+    ufw_hardening_reverify_status_source:
+      stdout: "{{ ufw_hardening_reverify_status_raw_stdout }}"
+      stdout_lines: "{{ ufw_hardening_reverify_status_raw_stdout.split('\n') }}"
+    ufw_hardening_reverify_default_ufw_raw: "{{ lookup('file', default_ufw_fixture_path) }}"
+    ufw_hardening_reverify_ssh_port_numeric: "{{ port | default(22) }}"
+  tasks:
+    - name: status_fixture_path ve default_ufw_fixture_path zorunludur
+      ansible.builtin.assert:
+        that:
+          - status_fixture_path is defined
+          - default_ufw_fixture_path is defined
+        fail_msg: >-
+          -e status_fixture_path=<path> -e default_ufw_fixture_path=<path>
+          ile fixture dosyaları verilmeli.
+
+    - name: Reverify mantığını fixture üzerinde çalıştır (soft-fail)
+      ansible.builtin.import_tasks: ../roles/ufw_hardening/tasks/compliance_reverify.yml
+
+    - name: "Sonucu dışa vur (compliance_reverify.yml kendisi hard-fail etmez)"
+      ansible.builtin.fail:
+        msg: "NON-COMPLIANT (test): bir veya daha fazla alan beklenen değerden sapmış; ayrıntı için yukarıdaki alan bazlı sonuçlara bakın."
+      when: ufw_hardening_reverify_failed | default(false)

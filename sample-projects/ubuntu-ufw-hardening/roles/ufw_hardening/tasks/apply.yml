@@ -1,0 +1,321 @@
+---
+# roles/ufw_hardening/tasks/apply.yml
+#
+# main.yml bu dosyayı YALNIZ tüm system_checks.yml/profile_lock_check.yml/
+# os_check.yml kontrolleri BAŞARILIYSA (yani en az bir passwordless sudo/
+# root doğrulaması, ufw binary kontrolü, firewalld fail-closed gate'i ve
+# SSH portu 1..65535 doğrulaması geçtiyse) import eder.
+#
+# GERÇEK UYGULAMA SIRASI (README.md "Güvenli uygulama sırası" ile birebir
+# aynı tutulur -- BULGU/istekteki sıra BİREBİR budur):
+#   1. SSH portu için TCP ALLOW kuralı ekle (UFW enable'dan ÖNCE -- lockout
+#      riskini azaltmak için bu adım HER ZAMAN ilk yazma komutudur).
+#   2. Default incoming: deny.
+#   3. Default outgoing: allow.
+#   4. Default routed/forward: deny.
+#   5. Logging: low.
+#   6. UFW'yi etkinleştir (`--force` ile: Ansible'ın TTY'si olmadığı için
+#      `ufw enable`'ın interaktif "Command may disrupt existing ssh
+#      connections. Proceed with operation (y|n)?" istemi `--force` OLMADAN
+#      asılı kalırdı -- ubuntu-ssh-hardening'deki `-n` sudo bayrağıyla AYNI
+#      "asla bir TTY'ye asılı kalma" gerekçesi).
+#   7. Yeniden doğrulama: active/policy/logging/SSH-allow-rule (mevcut
+#      bağlantı üzerinden, henüz reset_connection ÇAĞRILMADAN --
+#      compliance_reverify.yml).
+#
+# Adım 7 BAŞARISIZ olursa `ansible.builtin.fail` ile durulur; main.yml'deki
+# post_verify.yml (reset_connection + wait_for_connection) BU YÜZDEN hiç
+# çalışmaz -- Ansible'ın standart task-failure behavior'ı play'i burada
+# keser. DÜRÜST GERÇEK (BULGU/AUDIT-FIX1 SONRASI): UFW CLI
+# `/etc/default/ufw`, `/etc/ufw/ufw.conf`, kural dosyalarını VE çalışan
+# netfilter durumunu DEĞİŞTİREBİLİR; bu role'ün kendi bir backup/rollback
+# mekanizması YOKTUR -- 1..6 arası adımlardan biri başarılı olup bir
+# SONRAKİ başarısız olursa (ör. adım 3 sonrası bağlantı/host hatası) KISMİ
+# UYGULAMA mümkündür ve otomatik olarak geri alınmaz (bkz. README.md
+# "Lockout ve rollback sınırı"). Bu yüzden her adım kendi doğrulanmış
+# `would_*` kararı GEÇMEDEN hiç çalıştırılmaz (bkz. aşağıdaki "IDEMPOTENCY
+# TASARIMI") -- amaç, ihtiyaç olmayan bir mutasyonu/reload'u baştan
+# önlemektir; ZATEN uygulanmış bir adımın otomatik geri alınmasını
+# GARANTİ ETMEZ.
+#
+# IDEMPOTENCY TASARIMI (BULGU1/AUDIT-FIX1 SONRASI DÜZELTİLMİŞ DÜRÜST
+# DAVRANIŞ): aşağıdaki 6 yazma komutunun HER BİRİ, kendi doğrulanmış
+# `would_*` kararına (apply_decisions.yml) VE `not ansible_check_mode`e
+# BAĞLI olarak çalışır -- "altı komut her zaman çalışır ama idempotenttir"
+# iddiası YANLIŞTIR ve artık uygulanmaz: `ufw default ...` kalıcı
+# `/etc/default/ufw` dosyasını YAZAR ve UFW aktifse firewall'ı stop/start
+# eder; `ufw logging <level>` `/etc/ufw/ufw.conf`'u günceller; `ufw
+# --force enable` ZATEN aktifken bile start_firewall yolunu çalıştırır --
+# `changed_when: false` bu mutasyonu/reload'u ENGELLEMEZ, yalnız Ansible'ın
+# raporunu değiştirir. Bu yüzden ilgili alan ZATEN uyumluysa karşılık gelen
+# UFW komutu apply_decisions.yml'in ürettiği `would_*` bayrağı false olduğu
+# için BURADA HİÇ ÇALIŞTIRILMAZ (bkz. her yazma task'ının `when:`
+# koşulu) -- yalnız gerçekten ihtiyaç olduğunda çalışır. UFW'nin KENDİ
+# CLI-düzeyi idempotent davranışına (`ufw allow` zaten var olan bir kuralı
+# tekrar eklemez -- "Skipping adding existing rule") bu tasarımda ARTIK
+# GÜVENİLMEZ; karar tamamen apply_decisions.yml'deki doğrulanmış girdi
+# okumasına dayanır.
+#
+# Role'ün kendi bir backup/rollback mekanizması YOKTUR; kısmi uygulama
+# (bir yazma komutu başarılı olup bir sonraki başarısız olursa) mümkündür
+# -- bkz. README.md "Lockout ve rollback sınırı".
+#
+# `shell`/`raw` kullanılmaz; her komut sabit bir `argv` listesidir. Tek
+# değişken bileşeni, system_checks.yml tarafından 1..65535 aralığında
+# ZATEN doğrulanmış `ufw_hardening_ssh_port_numeric` sayısal değeridir --
+# kullanıcıdan veya inventory'den doğrulanmadan hiçbir değer argv'ye
+# ulaşmaz.
+
+# --- Ön-okumalar (yazma komutlarından ÖNCE, yalnız önizleme/changed_when
+#     doğruluğu için -- yukarıdaki "IDEMPOTENCY TASARIMI" notuna bakın) ---
+
+# BULGU2 (AUDIT-FIX1) -- fail-closed ön-okuma sözleşmesi: dört ön-okuma
+# task'ının HİÇBİRİ ARTIK `failed_when: false` TAŞIMAZ. `ufw show added`
+# veya `ufw status verbose` sıfırdan farklı bir rc ile dönerse (komut
+# çalıştırılamadıysa) VEYA `/etc/default/ufw`/`/etc/ufw/ufw.conf`
+# okunamıyorsa (slurp'un varsayılan modül davranışı: dosya yoksa/erişim
+# reddedilirse FAIL), bu task'lar burada BAŞARISIZ olur ve Ansible'ın
+# standart task-failure davranışı play'i BURADA durdurur -- apply_decisions.
+# yml'e (dolayısıyla HİÇBİR UFW yazma komutuna) hiç ulaşılmaz. Ayrıca
+# apply_decisions.yml'in kendi ilk task'ı, bu okumaların ÜRETTİĞİ rc/alan
+# biçimini would_* bayrakları üretilmeden ÖNCE AYRICA hard-gate ile
+# doğrular (offline test harness'te bu task'lar gerçek modül çağrıları
+# OLMADAN, sahte register'larla tetiklendiği için o ikinci doğrulama TEK
+# kaynaktır -- bkz. apply_decisions.yml başındaki not).
+
+- name: "UFW Hardening | Ön-okuma: eklenmiş kurallar (ufw show added)"
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/ufw
+      - show
+      - added
+  become: true
+  check_mode: false
+  changed_when: false
+  environment:
+    LC_ALL: C
+  register: ufw_hardening_pre_show_added
+
+- name: "UFW Hardening | Ön-okuma: gerçek UFW durumu (ufw status verbose)"
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/ufw
+      - status
+      - verbose
+  become: true
+  check_mode: false
+  changed_when: false
+  environment:
+    LC_ALL: C
+  register: ufw_hardening_pre_status
+
+- name: "UFW Hardening | Ön-okuma: /etc/default/ufw dosyasını oku"
+  ansible.builtin.slurp:
+    path: /etc/default/ufw
+  become: true
+  check_mode: false
+  register: ufw_hardening_pre_default_ufw_slurp
+
+- name: "UFW Hardening | Ön-okuma: /etc/ufw/ufw.conf dosyasını oku (mevcut LOGLEVEL için)"
+  # Logging seviyesi /etc/default/ufw'de DEĞİL, /etc/ufw/ufw.conf'ta
+  # (LOGLEVEL=...) tutulur. UFW inaktifken `ufw status verbose` hiçbir
+  # 'Logging:' satırı üretmez (yalnız 'Status: inactive' basar) -- bu
+  # yüzden ön-okuma için active-state'ten BAĞIMSIZ, her zaman mevcut olan
+  # bu dosya kullanılır (paket kurulumunda varsayılan LOGLEVEL=low ile
+  # birlikte gelir).
+  ansible.builtin.slurp:
+    path: /etc/ufw/ufw.conf
+  become: true
+  check_mode: false
+  register: ufw_hardening_pre_ufw_conf_slurp
+
+- name: "UFW Hardening | Ön-okuma karar mantığını çalıştır (would_* -- bkz. apply_decisions.yml)"
+  ansible.builtin.import_tasks: apply_decisions.yml
+  vars:
+    ufw_hardening_pre_default_ufw_raw: "{{ (ufw_hardening_pre_default_ufw_slurp.content | default('')) | b64decode }}"
+    ufw_hardening_pre_ufw_conf_raw: "{{ (ufw_hardening_pre_ufw_conf_slurp.content | default('')) | b64decode }}"
+
+# --- Dürüst önizleme (her iki modda da çalışır; check mode'da BUNLAR TEK
+#     görünür etkidir -- hiçbir yazma komutu check mode'da çalışmaz,
+#     bkz. aşağıdaki `when: not ansible_check_mode` korumaları) ---
+
+- name: "UFW Hardening | Planlanan değişiklik: SSH allow kuralı"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'PLANNED: ' ~ ufw_hardening_ssh_port_numeric ~ '/tcp için TCP ALLOW kuralı eklenecek (UFW enable ÖNCESİNDE).'
+         if ufw_hardening_would_add_ssh_allow
+         else ('NO-CHANGE: ' ~ ufw_hardening_ssh_port_numeric ~ '/tcp için allow kuralı zaten mevcut.') }}
+
+- name: "UFW Hardening | Planlanan değişiklik: default incoming policy"
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('PLANNED: default incoming policy \'' ~ ufw_hardening_pre_input_value ~ '\' -> \'' ~ ufw_hardening_expected_default_input_policy ~ '\' olarak değiştirilecek.')
+         if ufw_hardening_would_set_incoming
+         else ('NO-CHANGE: default incoming policy zaten \'' ~ ufw_hardening_expected_default_input_policy ~ '\'.') }}
+
+- name: "UFW Hardening | Planlanan değişiklik: default outgoing policy"
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('PLANNED: default outgoing policy \'' ~ ufw_hardening_pre_output_value ~ '\' -> \'' ~ ufw_hardening_expected_default_output_policy ~ '\' olarak değiştirilecek.')
+         if ufw_hardening_would_set_outgoing
+         else ('NO-CHANGE: default outgoing policy zaten \'' ~ ufw_hardening_expected_default_output_policy ~ '\'.') }}
+
+- name: "UFW Hardening | Planlanan değişiklik: default routed/forward policy"
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('PLANNED: default routed/forward policy \'' ~ ufw_hardening_pre_forward_value ~ '\' -> \'' ~ ufw_hardening_expected_default_forward_policy ~ '\' olarak değiştirilecek.')
+         if ufw_hardening_would_set_forward
+         else ('NO-CHANGE: default routed/forward policy zaten \'' ~ ufw_hardening_expected_default_forward_policy ~ '\'.') }}
+
+- name: "UFW Hardening | Planlanan değişiklik: logging seviyesi"
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('PLANNED: logging seviyesi \'' ~ ufw_hardening_pre_loglevel_value ~ '\' -> \'' ~ ufw_hardening_logging_level ~ '\' olarak değiştirilecek.')
+         if ufw_hardening_would_set_logging
+         else ('NO-CHANGE: logging seviyesi zaten \'' ~ ufw_hardening_logging_level ~ '\'.') }}
+
+- name: "UFW Hardening | Planlanan değişiklik: UFW etkinliği"
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'PLANNED: UFW etkinleştirilecek (şu an: ' ~ ufw_hardening_pre_active_value ~ ').'
+         if ufw_hardening_would_enable
+         else 'NO-CHANGE: UFW zaten active.' }}
+
+# --- Yazma komutları (yalnız normal modda; sıra BİLEREK budur) ---
+
+- name: "UFW Hardening | 1/6: SSH portu için TCP ALLOW kuralı ekle (enable'dan ÖNCE)"
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/ufw
+      - allow
+      - "{{ ufw_hardening_ssh_port_numeric }}/tcp"
+  become: true
+  changed_when: ufw_hardening_would_add_ssh_allow
+  when:
+    - not ansible_check_mode
+    - ufw_hardening_would_add_ssh_allow
+  register: ufw_hardening_apply_ssh_allow
+
+- name: "UFW Hardening | 2/6: Default incoming policy'yi deny yap"
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/ufw
+      - default
+      - deny
+      - incoming
+  become: true
+  changed_when: ufw_hardening_would_set_incoming
+  when:
+    - not ansible_check_mode
+    - ufw_hardening_would_set_incoming
+  register: ufw_hardening_apply_incoming
+
+- name: "UFW Hardening | 3/6: Default outgoing policy'yi allow yap"
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/ufw
+      - default
+      - allow
+      - outgoing
+  become: true
+  changed_when: ufw_hardening_would_set_outgoing
+  when:
+    - not ansible_check_mode
+    - ufw_hardening_would_set_outgoing
+  register: ufw_hardening_apply_outgoing
+
+- name: "UFW Hardening | 4/6: Default routed/forward policy'yi deny yap"
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/ufw
+      - default
+      - deny
+      - routed
+  become: true
+  changed_when: ufw_hardening_would_set_forward
+  when:
+    - not ansible_check_mode
+    - ufw_hardening_would_set_forward
+  register: ufw_hardening_apply_forward
+
+- name: "UFW Hardening | 5/6: Logging seviyesini ayarla"
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/ufw
+      - logging
+      - "{{ ufw_hardening_logging_level }}"
+  become: true
+  changed_when: ufw_hardening_would_set_logging
+  when:
+    - not ansible_check_mode
+    - ufw_hardening_would_set_logging
+  register: ufw_hardening_apply_logging
+
+- name: "UFW Hardening | 6/6: UFW'yi etkinleştir (non-interaktif)"
+  # `--force`: Ansible'ın TTY'si yoktur; `--force` olmadan `ufw enable`
+  # "Command may disrupt existing ssh connections. Proceed with operation
+  # (y|n)?" istemini açıp sonsuza dek asılı kalırdı (ubuntu-ssh-hardening'in
+  # `become_flags`'teki `-n` bayrağıyla AYNI "asla TTY'ye asılı kalma"
+  # gerekçesi). SSH allow kuralı bu adımdan HER ZAMAN ÖNCE (1/6) uygulanmış
+  # olur -- sıra main.yml/apply.yml boyunca yapısal olarak SABİTTİR.
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/ufw
+      - --force
+      - enable
+  become: true
+  changed_when: ufw_hardening_would_enable
+  when:
+    - not ansible_check_mode
+    - ufw_hardening_would_enable
+  register: ufw_hardening_apply_enable
+
+# --- Yeniden doğrulama (yalnız normal modda, enable SONRASI, mevcut
+#     bağlantı üzerinden -- reset_connection main.yml'in post_verify.yml
+#     include'unda, BU adımdan SONRA çalışır) ---
+
+- name: "UFW Hardening | Yeniden doğrulama: gerçek UFW durumunu oku (ufw status verbose)"
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/ufw
+      - status
+      - verbose
+  become: true
+  changed_when: false
+  environment:
+    LC_ALL: C
+  register: ufw_hardening_post_status
+  when: not ansible_check_mode
+
+- name: "UFW Hardening | Yeniden doğrulama: /etc/default/ufw dosyasını tekrar oku"
+  ansible.builtin.slurp:
+    path: /etc/default/ufw
+  become: true
+  register: ufw_hardening_post_default_ufw_slurp
+  when: not ansible_check_mode
+
+- name: "UFW Hardening | Yeniden doğrulama kontrollerini çalıştır (active/policy/logging/ssh-allow)"
+  ansible.builtin.import_tasks: compliance_reverify.yml
+  vars:
+    ufw_hardening_reverify_status_source: "{{ ufw_hardening_post_status }}"
+    ufw_hardening_reverify_default_ufw_raw: "{{ (ufw_hardening_post_default_ufw_slurp.content | default('')) | b64decode }}"
+    ufw_hardening_reverify_ssh_port_numeric: "{{ ufw_hardening_ssh_port_numeric }}"
+  when: not ansible_check_mode
+
+- name: "UFW Hardening | Yeniden doğrulama BAŞARISIZ: açık hata (otomatik ikinci deneme YOK)"
+  # trusted-operator güvenlik modeli: "AI agent'ın kendi kararını çalıştırması"/otomatik
+  # remediation kapsam dışıdır. Bu adım başarısız olursa role burada
+  # otomatik ikinci bir yazma denemez; yalnız açık ve eyleme geçirilebilir
+  # bir hata ile durur. UFW ZATEN enable edilmiş olabilir -- "hiçbir şey
+  # değişmedi" iddiası kurulamaz (bkz. README.md "Lockout ve rollback
+  # sınırı").
+  ansible.builtin.fail:
+    msg: >-
+      NON-COMPLIANT (reverify): UFW etkinleştirildikten SONRA bir veya daha
+      fazla alan (active/default policy/logging/SSH allow kuralı) beklenen
+      durumda değil; ayrıntı için yukarıdaki reverify task'larına bakın.
+      UFW ZATEN etkinleştirilmiş olabilir; bu role burada otomatik ikinci
+      bir düzeltme denemez -- hedefi elle inceleyin.
+  when:
+    - not ansible_check_mode
+    - ufw_hardening_reverify_failed | default(false)

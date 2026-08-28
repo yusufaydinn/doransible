@@ -1,0 +1,50 @@
+---
+# tests/check_system_checks_gate.yml
+#
+# R1-V3H4-SIMPLIFY: davranışsal kanıt -- roles/ssh_hardening/tasks/
+# system_checks.yml'in passwordless sudo/root önkoşulunun (eski manuel
+# `ssh_hardening_confirm_key_based_access` mandalının YERİNE geçen tek
+# otomatik gate), önkoşul BAŞARISIZ olduğunda apply.yml'e (dosya yazma,
+# reload) HİÇ ULAŞILMADIĞINI, BAŞARILI olduğunda ise zincirin devam
+# ettiğini kanıtlamak.
+#
+# Gerçek `become: true` + `id -u` çağrısı bu offline sandbox'ta gerçek
+# root/hedef olmadan çalıştırılamaz (aynı dürüst sınır apply_decisions
+# harness'ında da kabul edilmiştir -- bkz. run_offline_tests.sh başlığı
+# ve README.md "Sınırlar"). Bu yüzden bu harness, yalnızca `become`
+# gerektiren gerçek `id -u` komutunu, `fake_uid_check_stdout` ile sürülen
+# VE become GEREKTİRMEYEN bir test-double komutla (`/bin/echo`)
+# değiştirir, AYNI değişken adına (`ssh_hardening_uid_check`) register
+# eder.
+#
+# R1-V3H4-SIMPLIFY-AUDIT-FIX1: assert'in KENDİSİ artık burada TEKRAR
+# YAZILMAZ -- `../roles/ssh_hardening/tasks/uid_gate_assert.yml`
+# (system_checks.yml'in de import ettiği AYNI, TEK KAYNAKLI dosya)
+# doğrudan import edilir. Ölçülen şey: assert BAŞARISIZ olduğunda
+# sonraki "apply/reload marker" task'ının HİÇ ÇALIŞMAMASI (Ansible'ın
+# standart task-failure davranışı, play'i burada durdurur); assert
+# BAŞARILI olduğunda ÇALIŞMASI. `tests/run_offline_tests.sh`'deki
+# mutasyon testi (`uid_gate_assert_mutation_proves_shared_source_of_truth`)
+# ayrıca bu dosyanın GERÇEKTEN production dosyasını import ettiğini
+# (kendi kopya assert'i OLMADIĞINI) production dosyayı geçici olarak
+# bozup bu harness'in de KIRMIZI olduğunu göstererek kanıtlar.
+
+- name: Offline system_checks passwordless-sudo gate harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "[TEST DOUBLE] Passwordless sudo/root önkoşulu (id -u) -- gerçek become YOK"
+      ansible.builtin.command:
+        argv:
+          - /bin/echo
+          - "{{ fake_uid_check_stdout | default('0') }}"
+      changed_when: false
+      register: ssh_hardening_uid_check
+
+    - name: "SSH Hardening | UID=0 gate (ortak assert -- bkz. uid_gate_assert.yml)"
+      ansible.builtin.import_tasks: ../roles/ssh_hardening/tasks/uid_gate_assert.yml
+
+    - name: "[TEST MARKER] apply.yml buraya kadar ulaşılırsa çalışırdı"
+      ansible.builtin.debug:
+        msg: "APPLY_CHAIN_WOULD_RUN"

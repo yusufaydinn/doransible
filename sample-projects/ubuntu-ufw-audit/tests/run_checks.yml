@@ -1,0 +1,58 @@
+---
+# tests/run_checks.yml
+#
+# Offline regresyon koşucusu: gerçek bir host, SSH bağlantısı veya sudo
+# gerektirmeden roles/ufw_audit/tasks/checks.yml mantığını sahte (fixture)
+# `ufw status verbose` ve `/etc/default/ufw` içerikleriyle çalıştırır.
+# `status_fixture_path` ve `default_ufw_fixture_path` extra-var'ları
+# zorunludur; sonuç, run_offline_tests.sh tarafından ansible-playbook'un
+# çıkış koduna (0=compliant, 0-dışı=non-compliant/hata) bakılarak
+# değerlendirilir.
+#
+# Diğer girdiler extra-var ile override edilebilir (hepsinin güvenli/
+# compliant varsayılanları vardır, böylece her senaryo yalnız test ettiği
+# tek boyutu değiştirir):
+#   - ufw_audit_binary_exists / ufw_audit_binary_executable (varsayılan: true)
+#   - ufw_audit_status_rc (varsayılan: 0)
+#   - ufw_audit_firewalld_status_stdout (varsayılan: "inactive")
+#   - ufw_audit_firewalld_status_rc (varsayılan: 3, "inactive" ile tutarlı)
+#   - ufw_audit_service_status_stdout (varsayılan: "active", yalnız bilgi
+#     amaçlı debug task'ında görünür, compliance kararına etki etmez)
+#   - ansible_port (varsayılan: tanımsız -> checks.yml 22 varsayar)
+#
+# Bu dosya gerçek ürünün bir parçası değildir; yalnızca test amaçlıdır ve
+# gerçek project olarak kaydedilmesi beklenmez.
+
+- name: Ubuntu UFW Audit offline check regression harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/ufw_audit/defaults/main.yml
+  vars:
+    ufw_audit_default_ufw_raw: "{{ lookup('file', default_ufw_fixture_path) }}"
+    ufw_audit_status_verbose:
+      rc: "{{ ufw_audit_status_rc | default(0) }}"
+      stdout: "{{ lookup('file', status_fixture_path) }}"
+      stdout_lines: "{{ lookup('file', status_fixture_path).split('\n') }}"
+    ufw_audit_binary_stat:
+      stat:
+        exists: "{{ ufw_audit_binary_exists | default(true) }}"
+        executable: "{{ ufw_audit_binary_executable | default(true) }}"
+    ufw_audit_firewalld_status:
+      stdout: "{{ ufw_audit_firewalld_status_stdout | default('inactive') }}"
+      rc: "{{ ufw_audit_firewalld_status_rc | default(3) }}"
+    ufw_audit_ufw_service_status:
+      stdout: "{{ ufw_audit_service_status_stdout | default('active') }}"
+  tasks:
+    - name: status_fixture_path ve default_ufw_fixture_path zorunludur
+      ansible.builtin.assert:
+        that:
+          - status_fixture_path is defined
+          - default_ufw_fixture_path is defined
+        fail_msg: >-
+          -e status_fixture_path=<path> -e default_ufw_fixture_path=<path>
+          ile birer fixture dosyası verilmeli.
+
+    - name: ufw_audit kontrollerini fixture'lar üzerinde çalıştır
+      ansible.builtin.import_tasks: ../roles/ufw_audit/tasks/checks.yml

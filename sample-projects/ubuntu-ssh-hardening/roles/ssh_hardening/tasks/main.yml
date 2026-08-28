@@ -1,0 +1,106 @@
+---
+# roles/ssh_hardening/tasks/main.yml
+#
+# Ubuntu SSH hardening (remediation). Yalnız DORAnsible'a ait TEK bir
+# sshd_config.d drop-in dosyasını yönetir; ana sshd_config veya başka bir
+# drop-in dosyasını hiçbir task değiştirmez. Kapsam, sınırlar, otomatik
+# SSH/sudo önkoşulu ve check/normal mode farkı için ../../../README.md'ye bakın.
+#
+# GERÇEK KONTROL SIRASI (README.md'deki "Güvenli uygulama sırası" ile
+# BİREBİR aynı tutulur -- BULGU5/FIX1.1/R1-V3H4-SIMPLIFY):
+#   0. Profil kilidi: yönetilen path, desteklenen sürüm listesi, 10
+#      baseline değeri, compliance alan listesi VE reconnect timeout/
+#      sleep ayarları sabit audit değerlerinden sapmamış mı
+#      (profile_lock_check.yml, BULGU4/FIX1.1). Bu dosyadaki kilit
+#      referansları task-level adlandırılmış değişkenler DEĞİLDİR (bkz. o
+#      dosyanın yorumu) -- gölgelenemezler.
+#   1. OS desteği (os_check.yml).
+#   2. Sistem ön-koşulları: passwordless sudo/root (gerçek UID=0, become
+#      ile), sshd binary, DEĞİŞİKLİKTEN ÖNCEKİ config zaten geçerli mi
+#      (system_checks.yml). R1-V3H4-SIMPLIFY: bu adım artık apply.yml'e
+#      ulaşmadan önceki TEK erişim/yetki önkoşuludur -- ayrı, manuel bir
+#      "operatör onayı" adımı YOKTUR (aşağıdaki not).
+#   3. Failure-atomic apply (apply.yml, BULGU1/BULGU2/FIX1.1): yerleştir,
+#      syntax doğrula (`sshd -t`), pre-reload effective OKU (`sshd -T`,
+#      okuma komutunun kendisi de ayrı bir başarısızlık sınıfıdır) ve
+#      okunan değerleri baseline'a karşı doğrula; üç doğrulamadan biri
+#      başarısızsa rollback + rollback-doğrula + fail (reload YOK);
+#      hepsi başarılıysa VE içerik değiştiyse reload.
+#   4. Reload sonrası: bağlantı sıfırla, bounded `wait_for_connection` ile
+#      YENİ bağlantının kurulabildiğini kanıtla, effective doğrula
+#      (post_verify.yml, BULGU2/FIX1.1).
+#
+# R1-V3H4-SIMPLIFY (manuel onay mandalının kaldırılması): eskiden burada
+# ayrı bir "Operatör onayı kontrolü" adımı (confirm_check.yml) vardı --
+# `ssh_hardening_confirm_key_based_access` adlı, operatörün AYRI bir
+# terminalde elle doğrulayıp project'in group_vars/all.yml dosyasında
+# elle true'ya çektiği bir mandal. Bu mandal TAMAMEN KALDIRILDI (dosya
+# silindi). Güvenlik zinciri artık İKİ OTOMATİK adıma dayanır:
+#   a) Play seviyesinde `gather_facts: true` (bkz. ../../../ubuntu-ssh-
+#      hardening.yml): bu role'ün İLK task'ı çalışmadan ÖNCE Ansible
+#      hedefe DORAnsible'ın mevcut credential sınırı (inventory'deki
+#      `ansible_ssh_private_key_file`/`ansible_user`) içinde GERÇEKTEN
+#      bir SSH bağlantısı kurar; bağlantı kurulamazsa play bu role'e hiç
+#      girmeden başarısız olur.
+#   b) system_checks.yml'in İLK task'ı: `become: true` ile `id -u`
+#      çalıştırıp çıktının tam olarak `0` olduğunu (gerçek UID=0)
+#      uid_gate_assert.yml (ortak, tek kaynaklı assert -- bkz. FIX1 notu
+#      altta) ile doğrular -- passwordless (NOPASSWD) sudo/root
+#      doğrulamasıdır. Bu task başarısızsa (nonzero UID, become hatası
+#      veya interaktif parola istemi) Ansible'ın standart task-failure
+#      davranışıyla play burada durur; apply.yml'deki HİÇBİR task (yazma,
+#      reload) çalışmaz.
+# Bu ikisi BİRLİKTE, eski manuel mandalın verdiği garantiyi (hedefe
+# key-based erişim + parolasız yetki var) OTOMATİK ve DAHA GÜÇLÜ biçimde
+# verir (eski mandal yalnız operatörün "doğruladım" BEYANIYDI; yenisi
+# GERÇEK bir bağlantı+yetki denemesidir). Ayrıntı için README.md
+# "Otomatik SSH/sudo önkoşulu" bölümüne bakın.
+#
+# R1-V3H4-SIMPLIFY-AUDIT-FIX1: interaktif parola istemi task'ı NEDEN
+# başarısız kılar (ve asılı KALMAZ)? Çünkü ../../../ubuntu-ssh-
+# hardening.yml'deki play, `become_method: sudo` / `become_user: root` /
+# `become_flags: "-H -S -n"` değerlerini AÇIKÇA pinler -- `-n`
+# (non-interactive) sudo'ya parola gerekiyorsa PROMPT AÇMADAN doğrudan
+# hata vermesini söyler. "DORAnsible become-parolası saklamaz/göndermez"
+# gözlemi buna EK bir savunma katmanıdır, TEK dayanak DEĞİLDİR. Ayrıca
+# `system_checks.yml`'deki UID=0 assert'i artık BURADA (veya offline test
+# harness'inde) TEKRAR YAZILMAZ -- her ikisi de tek kaynaklı
+# `uid_gate_assert.yml`'i import eder (bkz. system_checks.yml).
+#
+# LIVE-AUDIT-FIX1 (post_verify dahil etme mekanizması): post_verify.yml
+# aşağıda `import_tasks` (STATIC) DEĞİL, bilerek `include_tasks` (DYNAMIC)
+# ile dahil edilir. Sebep: `ansible.builtin.meta: reset_connection` bir
+# `when:` koşulunu KENDİ ÜZERİNDE desteklemez -- Ansible bunu her zaman
+# "[WARNING]: reset_connection task does not support when conditional"
+# uyarısıyla birlikte KOŞULSUZ çalıştırır (bu, canlı UI check-mode
+# koşusunda GÖZLEMLENEN gerçek bir davranıştır; empirik olarak
+# doğrulanmıştır). `import_tasks` statik olduğu için, dosya HER ZAMAN
+# parse edilip task listesine eklenir; üzerine iliştirilen `when:` (main.yml
+# BURADA veya post_verify.yml içindeki task'ın kendi üzerinde) meta task'ı
+# check mode'da bile GERÇEKTEN çalıştırmaktan alıkoyamaz. `include_tasks`
+# ise DİNAMİKTİR: buradaki `when:` çalışma anında değerlendirilir ve YANLIŞ
+# ise post_verify.yml'in İÇERİĞİ (dolayısıyla `meta: reset_connection`
+# task'ı) play'in task listesine HİÇ EKLENMEZ -- meta task'ın kendi
+# when-desteksizliği devreye giremez, çünkü task zaten hiç var olmaz. Bu
+# yüzden post_verify.yml içindeki task'ların artık kendi üzerlerinde AYRICA
+# `not ansible_check_mode` koşulu YOKTUR (gereksiz VE aynı uyarıyı tekrar
+# tetikler) -- tek gate burada, include_tasks seviyesindedir.
+
+- name: "SSH Hardening | Profil kilidi kontrolü"
+  ansible.builtin.import_tasks: profile_lock_check.yml
+
+- name: "SSH Hardening | OS kontrolü"
+  ansible.builtin.import_tasks: os_check.yml
+
+- name: "SSH Hardening | Sistem ön-koşul kontrolleri (passwordless sudo/root, sshd binary, mevcut config)"
+  ansible.builtin.import_tasks: system_checks.yml
+
+- name: "SSH Hardening | Yönetilen drop-in'i uygula ve doğrula (failure-atomic)"
+  ansible.builtin.import_tasks: apply.yml
+
+- name: "SSH Hardening | Reload sonrası effective doğrulama"
+  # include_tasks (DYNAMIC) -- bkz. yukarıdaki LIVE-AUDIT-FIX1 yorumu.
+  # Koşul YANLIŞSA (check mode VEYA aday başarısız) post_verify.yml'in
+  # İÇERİĞİ (meta: reset_connection dahil) play'e HİÇ EKLENMEZ.
+  ansible.builtin.include_tasks: post_verify.yml
+  when: not ansible_check_mode and not ssh_hardening_candidate_failed

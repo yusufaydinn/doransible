@@ -1,0 +1,86 @@
+---
+# roles/ssh_hardening/tasks/system_checks.yml
+#
+# Gerçek hedefe bağlı, salt-okunur ön-koşul kontrolleri: passwordless
+# sudo/root, sshd binary ve DEĞİŞİKLİKTEN ÖNCEKİ mevcut sshd
+# yapılandırmasının geçerli olduğunu doğrular. Bu dosya hiçbir dosya
+# yazmaz, paket kurmaz veya servis restart/reload etmez.
+#
+# R1-V3H4-SIMPLIFY: aşağıdaki ilk iki task (id -u + UID=0 assert, FIX1
+# ile ikincisi artık uid_gate_assert.yml'den import edilir -- bkz. altta),
+# eskiden ayrı bir manuel mandalla (confirm_check.yml, `ssh_hardening_
+# confirm_key_based_access`) sağlanan "hedefe erişim var mı" garantisinin
+# YERİNE geçen TEK VE OTOMATİK önkoşuldur (bkz. ../main.yml başındaki
+# R1-V3H4-SIMPLIFY notu). `become: true` ile gerçek bir uzak komut
+# çalıştırıp çıktının GERÇEKTEN `0` (UID=0) olduğunu doğrular -- bir
+# değişkenin operatör tarafından elle işaretlenmiş "onaylandı" BEYANI
+# değil, GERÇEK bir bağlantı+yetki denemesidir.
+#
+# R1-V3H4-SIMPLIFY-AUDIT-FIX1 -- non-interactive sözleşmesi: bu task'ın
+# `become: true` taşıması, ../../../ubuntu-ssh-hardening.yml'deki play
+# seviyesinde AÇIKÇA pinlenmiş `become_method: sudo` / `become_user: root`
+# / `become_flags: "-H -S -n"` değerlerini MİRAS alır -- `-n` (non-
+# interactive) sudo'ya parola gerekiyorsa PROMPT AÇMADAN doğrudan hata
+# ile çıkmasını söyler; bu task'ın non-interaktif kalacağı iddiası BU
+# AÇIK PİNE dayanır. "DORAnsible become-parolası saklamaz/göndermez"
+# gözlemi (bu projede hiçbir yerde `ansible_become_pass`/
+# `ansible_sudo_pass` kullanılmaz) buna EK bir savunma katmanıdır, YERİNE
+# geçmez. DORAnsible bu yetkiyi hedefe VERMEZ -- yalnız ÇALIŞTIRMADAN
+# ÖNCE var olup olmadığını doğrular; hedef kullanıcının NOPASSWD sudo
+# yetkisine ÖNCEDEN sahip olması gerekir.
+#
+# check_mode: false -> ssh_audit role'ündeki aynı istisna gerekçesiyle
+# (sample-projects/ubuntu-ssh-audit/roles/ssh_audit/tasks/main.yml):
+# bu task'lar tamamen salt-okunurdur ve uygulamanın check-mode execution
+# modelinde bile operatöre "ön-koşullar sağlanıyor mu" bilgisini
+# önizleme sırasında vermek için gerçekten çalışması gerekir (dolayısıyla
+# passwordless sudo/root önkoşulu check mode'da DA doğrulanır -- yalnız
+# normal mode'a özgü değildir). Hiçbiri /etc/ssh içeriğini değiştirmez.
+
+- name: "SSH Hardening | Passwordless sudo/root önkoşulu (id -u, become ile, non-interaktif)"
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/id
+      - -u
+  become: true
+  check_mode: false
+  changed_when: false
+  register: ssh_hardening_uid_check
+
+- name: "SSH Hardening | UID=0 gate (ortak assert -- bkz. uid_gate_assert.yml)"
+  ansible.builtin.import_tasks: uid_gate_assert.yml
+
+- name: "SSH Hardening | sshd binary durumu"
+  ansible.builtin.stat:
+    path: /usr/sbin/sshd
+  register: ssh_hardening_sshd_stat
+
+- name: "SSH Hardening | sshd binary mevcut ve çalıştırılabilir mi"
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_sshd_stat.stat.exists
+      - ssh_hardening_sshd_stat.stat.executable
+    fail_msg: "FAIL-CLOSED: /usr/sbin/sshd bulunamadı veya çalıştırılabilir değil."
+    success_msg: "sshd binary mevcut ve çalıştırılabilir."
+
+- name: "SSH Hardening | Değişiklik ÖNCESİ mevcut sshd yapılandırması geçerli mi (sshd -t)"
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -t
+  become: true
+  check_mode: false
+  changed_when: false
+  register: ssh_hardening_baseline_check
+
+- name: "SSH Hardening | Ön-koşul: mevcut yapılandırma bu role'den ÖNCE de geçerli olmalı"
+  ansible.builtin.assert:
+    that:
+      - ssh_hardening_baseline_check.rc == 0
+    fail_msg: >-
+      FAIL-CLOSED: bu role çalışmadan ÖNCE bile mevcut /etc/ssh yapılandırması
+      `sshd -t` doğrulamasından geçmiyor (rc={{ ssh_hardening_baseline_check.rc }},
+      stderr: {{ ssh_hardening_baseline_check.stderr | default('') }}). Bu role
+      zaten bozuk bir yapılandırmanın üzerine inşa edilmez; önce host'a
+      doğrudan erişip mevcut sshd yapılandırmasını düzeltin.
+    success_msg: "Mevcut sshd yapılandırması (değişiklik öncesi) geçerli."

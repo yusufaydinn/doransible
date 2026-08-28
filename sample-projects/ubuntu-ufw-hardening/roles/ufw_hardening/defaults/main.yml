@@ -1,0 +1,40 @@
+---
+# roles/ufw_hardening/defaults/main.yml
+#
+# Bu role, sample-projects/ubuntu-ufw-audit'in denetlediği UFW baseline'ını
+# UYGULAR (remediation). Aşağıdaki değerler audit role'ünün
+# roles/ufw_audit/defaults/main.yml içindeki güvenli varsayılanlarıyla
+# BİLEREK aynıdır (IPv6 hariç -- bkz. README.md "Yönetilen/yönetilmeyen
+# alanlar": bu dilimde IPV6 ayarı YÖNETİLMEZ, dokunulmaz).
+#
+# BULGU4/FIX1.1 desenine (ubuntu-ssh-hardening) UYGUN: bu değişkenler
+# "ortam profili" anlamında override edilmek üzere TASARLANMADI --
+# değiştirmek, bu role'ün UYGULADIĞI ve sonradan DOĞRULADIĞI baseline'ın
+# kendisini değiştirir. roles/ufw_hardening/tasks/profile_lock_check.yml,
+# aşağıdaki desteklenen sürüm listesinin, üç default policy değerinin,
+# logging seviyesinin ve reconnect timeout/sleep ayarlarının, bu dosyadan
+# BAĞIMSIZ SABİT (literal, task içine gömülü) beklenen değerlerden sapıp
+# sapmadığını, apply.yml'e hiç ulaşılmadan, HİÇBİR UFW YAZMA KOMUTU
+# ÇALIŞTIRILMADAN en başta kontrol eder.
+
+ufw_hardening_supported_ubuntu_versions:
+  - "22.04"
+  - "24.04"
+
+# /etc/default/ufw içinde UYGULANACAK ve sonradan DOĞRULANACAK üç default
+# policy alanı -- ubuntu-ufw-audit'in aynı üç alanla (ufw_audit_expected_*)
+# birebir aynı beklenen değerleri.
+ufw_hardening_expected_default_input_policy: "DROP"
+ufw_hardening_expected_default_output_policy: "ACCEPT"
+ufw_hardening_expected_default_forward_policy: "DROP"
+
+# `ufw logging <level>` ile uygulanacak seviye. Yalnız "low" desteklenir --
+# bu dilimde özelleştirilemez (bkz. profile_lock_check.yml).
+ufw_hardening_logging_level: "low"
+
+# Etkinleştirme SONRASI reset_connection + wait_for_connection için üst
+# sınır ve poll aralığı (saniye) -- ubuntu-ssh-hardening'deki AYNI
+# "güvenli, pozitif, sıkı üst sınırlı" desen: bir aralık kontrolü yerine
+# bilinen-güvenli sabit değerlere PIN edilir.
+ufw_hardening_reconnect_timeout_seconds: 30
+ufw_hardening_reconnect_sleep_seconds: 2

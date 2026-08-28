@@ -1,0 +1,86 @@
+---
+# roles/ssh_hardening/tasks/post_verify.yml
+#
+# Adım 9 (README.md → "Güvenli uygulama sırası"): bağlantıyı yeniden kur,
+# `ansible.builtin.wait_for_connection` ile bağlanılabilir olmasını
+# SINIRLI bir sürede bekle, ve `sshd -T` ile disk üzerindeki config'i
+# YENİDEN OKUYUP audit baseline'ına karşı AYNI compliance_assert.yml
+# mantığıyla doğrula. main.yml bu dosyayı yalnız normal mode'da VE
+# apply.yml'deki aday adımların (syntax + effective-read + effective
+# baseline) tamamı başarılıyken import eder.
+#
+# ÖNEMLİ (FIX1.1 düzeltmesi): `sshd -T`, ÇALIŞAN sshd daemon'ının
+# BELLEĞİNİ sorgulamaz. Her çağrıda `/usr/sbin/sshd` kendi başına YENİ
+# bir süreç olarak başlar ve disk üzerindeki `/etc/ssh/sshd_config` +
+# `Include` zincirini o an baştan PARSE eder -- tıpkı apply.yml'deki
+# pre-reload `sshd -T` çağrısı gibi (bkz. o dosyanın yorumu). Bu adımın
+# pre-reload kontrolden farkı, İÇERİĞİ değil, NE ZAMAN ve NASIL
+# çalıştığıdır: reload'dan SONRA, ve -- daha önemlisi -- reset_connection
+# + wait_for_connection ile GERÇEKTEN YENİ bir SSH oturumu üzerinden.
+#
+# `meta: reset_connection` + `wait_for_connection` bilerek birlikte
+# kullanılır ve İKİ ayrı şeyi kanıtlar:
+#   1. Bağlantı düzeyinde: reload sonrasında BU HEDEFE GERÇEKTEN YENİ bir
+#      SSH bağlantısı kurulabiliyor mu -- bu, role'ün kendi içine
+#      gömülü somut bir "lockout olmadı" duman testidir. Ansible'ın
+#      ControlPersist ile çoğullanmış ESKİ bağlantısı reload sonrasında
+#      da açık kalabilir; reset_connection onu kapatıp bir sonraki
+#      task'ın GERÇEKTEN yeni bir el sıkışma açmasını zorlar,
+#      wait_for_connection da bunun sınırlı bir sürede (sonsuza dek
+#      asılı kalmadan) gerçekleştiğini doğrular.
+#   2. İçerik düzeyinde: yalnız YENİ bir el sıkışmada devreye giren
+#      ayarların (ör. PasswordAuthentication) hâlâ ESKİ bağlantı
+#      üzerinden yanıltıcı biçimde "çalışıyor" görünmesinin önüne geçer.
+#
+# Bu adım BAŞARISIZ olursa role BURADA otomatik ikinci bir yazma/reload
+# denemez (trusted-operator güvenlik modeli: "Otomatik remediation" kapsam dışıdır);
+# yalnız açık ve eyleme geçirilebilir bir hata ile durur -- inceleme ve
+# gerekirse elle müdahale operatöre aittir.
+#
+# LIVE-AUDIT-FIX1: bu dosyadaki task'ların HİÇBİRİ artık kendi üzerinde
+# `when: not ansible_check_mode` TAŞIMAZ. Bu dosya main.yml tarafından
+# `include_tasks` (DYNAMIC) ile ve YALNIZ `not ansible_check_mode and not
+# ssh_hardening_candidate_failed` iken dahil edilir -- yani bu dosyanın
+# İÇERİĞİ play'e eklendiğinde check mode/aday-başarısız ihtimali zaten
+# ELENMİŞTİR; tek gate main.yml'deki include_tasks'tadır. Özellikle ilk
+# task (`meta: reset_connection`) üzerinde AYRICA bir `when:` bulunmaması
+# BİLEREKTİR: `meta: reset_connection` bir `when:` koşulunu KENDİ ÜZERİNDE
+# desteklemez -- Ansible bunu `when:` iliştirilmiş olsa bile HER ZAMAN
+# koşulsuz çalıştırıp "[WARNING]: reset_connection task does not support
+# when conditional" uyarısı basar (bkz. main.yml'in başındaki
+# LIVE-AUDIT-FIX1 yorumu ve README.md). Bu yüzden bu adımın check
+# mode'da/aday-başarısız yolunda ASLA çalışmaması, task'ın kendi üzerindeki
+# bir koşulla DEĞİL, dosyanın bütünüyle hiç dahil edilmemesiyle sağlanır.
+
+- name: "SSH Hardening | Bağlantıyı sıfırla (yeni SSH oturumuyla effective config'i doğrula)"
+  ansible.builtin.meta: reset_connection
+
+- name: "SSH Hardening | Yeni bağlantının kurulmasını sınırlı sürede bekle"
+  ansible.builtin.wait_for_connection:
+    timeout: "{{ ssh_hardening_reconnect_timeout_seconds }}"
+    sleep: "{{ ssh_hardening_reconnect_sleep_seconds }}"
+
+- name: "SSH Hardening | Reload sonrası aktif sshd yapılandırmasını oku (sshd -T)"
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -T
+  become: true
+  changed_when: false
+  register: ssh_hardening_post_sshd_t
+
+- name: "SSH Hardening | Effective değerleri baseline'a karşı değerlendir (soft-fail)"
+  ansible.builtin.import_tasks: compliance_assert.yml
+  vars:
+    ssh_hardening_compliance_source: "{{ ssh_hardening_post_sshd_t }}"
+    ssh_hardening_compliance_stage_label: "post-reload"
+
+- name: "SSH Hardening | Post-reload BAŞARISIZ: açık hata (otomatik ikinci yazma YOK)"
+  ansible.builtin.fail:
+    msg: >-
+      NON-COMPLIANT (post-reload): bir veya daha fazla alan reload
+      SONRASI beklenen değerden sapmış; ayrıntı için yukarıdaki alan
+      bazlı sonuçlara bakın. Servis ZATEN reload edilmiş olabilir; bu
+      role burada otomatik ikinci bir yazma/düzeltme denemez (bkz.
+      README.md "Backup/rollback sınırları") -- hedefi elle inceleyin.
+  when: ssh_hardening_compliance_failed | default(false)

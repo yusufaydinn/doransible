@@ -1,0 +1,61 @@
+---
+# tests/check_apply_decisions.yml
+#
+# Offline: apply_decisions.yml SAF karar mantığını, gerçek `ufw show
+# added`/`ufw status verbose`/`/etc/default/ufw`/`/etc/ufw/ufw.conf`
+# okumalarının ÜRETMİŞ OLACAĞI sonuçları simüle eden sahte register-şekilli
+# değişkenlerle çalıştırır. Gerçek host, bağlantı, sudo veya UFW binary'si
+# GEREKMEZ.
+#
+# Girdi extra-var'ları (hepsinin makul/compliant varsayılanı var --
+# varsayılan çağrı "hiçbir şey değişmeyecek" [ikinci normal çalıştırma /
+# idempotent] senaryosunu temsil eder):
+#   fake_show_added_lines        (list[str], varsayılan: ["ufw allow 22/tcp"])
+#   fake_show_added_rc           (int, varsayılan: 0 -- BULGU2)
+#   fake_status_lines            (list[str], varsayılan: ["Status: active"])
+#   fake_status_rc               (int, varsayılan: 0 -- BULGU2)
+#   fake_default_ufw_raw         (str, varsayılan: uyumlu 3 policy)
+#   fake_ufw_conf_raw            (str, varsayılan: "LOGLEVEL=low")
+#   fake_ssh_port                (int, varsayılan: 22)
+#
+# Çıktı: apply.yml'deki GERÇEK karar bayraklarını (any_change dahil)
+# birebir yansıtan "RESULT ..." satırları (debug ile basılır, test
+# script'i grep ile okur) -- YALNIZ apply_decisions.yml'in fail-closed
+# ön-okuma gate'i (BULGU2) GEÇERSE basılır; gate BAŞARISIZ olursa play
+# burada durur ve HİÇBİR "RESULT" satırı hiç ÜRETİLMEZ (bu, apply.yml'deki
+# yazma komutlarına "hiç ulaşılmadığının" offline kanıtıdır).
+
+- name: UFW Hardening offline apply-decisions harness
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../roles/ufw_hardening/defaults/main.yml
+  vars:
+    ufw_hardening_pre_show_added:
+      stdout_lines: "{{ fake_show_added_lines | default(['ufw allow 22/tcp']) }}"
+      rc: "{{ fake_show_added_rc | default(0) }}"
+    ufw_hardening_pre_status:
+      stdout_lines: "{{ fake_status_lines | default(['Status: active']) }}"
+      rc: "{{ fake_status_rc | default(0) }}"
+    ufw_hardening_default_default_ufw_raw: |-
+      DEFAULT_INPUT_POLICY="DROP"
+      DEFAULT_OUTPUT_POLICY="ACCEPT"
+      DEFAULT_FORWARD_POLICY="DROP"
+    ufw_hardening_pre_default_ufw_raw: "{{ fake_default_ufw_raw | default(ufw_hardening_default_default_ufw_raw) }}"
+    ufw_hardening_pre_ufw_conf_raw: "{{ fake_ufw_conf_raw | default('LOGLEVEL=low') }}"
+    ufw_hardening_ssh_port_numeric: "{{ fake_ssh_port | default(22) }}"
+  tasks:
+    - name: apply_decisions.yml'i çalıştır
+      ansible.builtin.import_tasks: ../roles/ufw_hardening/tasks/apply_decisions.yml
+
+    - name: Sonuç bayraklarını raporla
+      ansible.builtin.debug:
+        msg:
+          - "RESULT would_add_ssh_allow={{ ufw_hardening_would_add_ssh_allow }}"
+          - "RESULT would_set_incoming={{ ufw_hardening_would_set_incoming }}"
+          - "RESULT would_set_outgoing={{ ufw_hardening_would_set_outgoing }}"
+          - "RESULT would_set_forward={{ ufw_hardening_would_set_forward }}"
+          - "RESULT would_set_logging={{ ufw_hardening_would_set_logging }}"
+          - "RESULT would_enable={{ ufw_hardening_would_enable }}"
+          - "RESULT any_change={{ ufw_hardening_any_change }}"
