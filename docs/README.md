@@ -12,6 +12,7 @@ Belgeler okuyucu türüne göre ayrılmıştır.
 | [Kullanıcı Rehberi](KULLANICI_REHBERI.md) | Ekranlar, project/inventory kaydı, ping, Check/Normal çalışma, Job sonuçları, örnek audit/remediation akışı ve hata çözümü |
 | [Kurulum ve Yapılandırma](gelistirme-ortami.md) | Controller kurulumu, ortam değişkenleri, servisleri başlatma, yedekleme ve doğrulama |
 | [Örnek Project'ler](../sample-projects/README.md) | Ubuntu SSH ve UFW audit/remediation içerikleri ve güvenlik sınırları |
+| [Sunum Paketi](../presentation/README.md) | Tek dosya olarak taşınabilir HTML sunumu, konuşmacı notları ve düzenlenebilir diyagram kaynakları |
 
 ## Geliştirici
 

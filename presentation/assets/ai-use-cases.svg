@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Planlanan AI entegrasyonları UML use-case diyagramı</title>
+  <desc id="desc">Profesyonel operatörün mevcut DORAnsible kullanım alanları ve planlanan playbook ile operasyon AI yetenekleri.</desc>
+  <defs>
+    <style>
+      .actor { stroke:#0f766e; stroke-width:5; fill:none; }
+      .line { stroke:#475569; stroke-width:3; }
+      .dash { stroke:#7c3aed; stroke-width:3; stroke-dasharray:10 8; }
+      .uc { fill:#ffffff; stroke:#0f766e; stroke-width:3; }
+      .ai { fill:#faf5ff; stroke:#7c3aed; stroke-width:3; }
+      .txt { font:600 21px Inter,Arial,sans-serif; fill:#0f172a; text-anchor:middle; }
+      .sub { font:500 17px Inter,Arial,sans-serif; fill:#475569; text-anchor:middle; }
+      .head { font:700 25px Inter,Arial,sans-serif; fill:#0f766e; }
+      .ahead { font:700 25px Inter,Arial,sans-serif; fill:#7c3aed; }
+    </style>
+  </defs>
+  <rect width="1600" height="900" rx="34" fill="#f8fafc"/>
+  <rect x="270" y="35" width="565" height="825" rx="28" fill="#f0fdfa" stroke="#0f766e" stroke-width="4"/>
+  <rect x="880" y="35" width="680" height="825" rx="28" fill="#faf5ff" stroke="#7c3aed" stroke-width="4" stroke-dasharray="14 10"/>
+  <text x="305" y="78" class="head">MEVCUT DORANSIBLE MVP</text>
+  <text x="915" y="78" class="ahead">PLANLANAN AI ENTEGRASYONLARI</text>
+
+  <circle cx="125" cy="325" r="32" class="actor"/><line x1="125" y1="357" x2="125" y2="465" class="actor"/>
+  <line x1="72" y1="400" x2="178" y2="400" class="actor"/><line x1="125" y1="465" x2="75" y2="535" class="actor"/><line x1="125" y1="465" x2="175" y2="535" class="actor"/>
+  <text x="125" y="580" class="txt">Profesyonel</text><text x="125" y="610" class="txt">operatör</text>
+
+  <g>
+    <ellipse cx="555" cy="155" rx="205" ry="54" class="uc"/><text x="555" y="151" class="txt">Project ve inventory</text><text x="555" y="180" class="sub">yönetimi</text>
+    <ellipse cx="555" cy="285" rx="205" ry="54" class="uc"/><text x="555" y="281" class="txt">Playbook keşfi</text><text x="555" y="310" class="sub">ve plan önizleme</text>
+    <ellipse cx="555" cy="415" rx="205" ry="54" class="uc"/><text x="555" y="411" class="txt">Ping ve geçmiş</text><text x="555" y="440" class="sub">inceleme</text>
+    <ellipse cx="555" cy="545" rx="205" ry="54" class="uc"/><text x="555" y="541" class="txt">Check / normal mode</text><text x="555" y="570" class="sub">execution</text>
+    <ellipse cx="555" cy="675" rx="205" ry="54" class="uc"/><text x="555" y="671" class="txt">Job sonucu</text><text x="555" y="700" class="sub">ve geçmiş</text>
+  </g>
+  <g>
+    <line x1="180" y1="400" x2="350" y2="155" class="line"/><line x1="180" y1="400" x2="350" y2="285" class="line"/>
+    <line x1="180" y1="400" x2="350" y2="415" class="line"/><line x1="180" y1="400" x2="350" y2="545" class="line"/>
+    <line x1="180" y1="400" x2="350" y2="675" class="line"/>
+  </g>
+
+  <g>
+    <ellipse cx="1090" cy="155" rx="165" ry="50" class="ai"/><text x="1090" y="161" class="txt">Playbooku açıkla</text>
+    <ellipse cx="1370" cy="155" rx="165" ry="50" class="ai"/><text x="1370" y="149" class="txt">Playbook taslağı</text><text x="1370" y="177" class="sub">oluştur</text>
+    <ellipse cx="1090" cy="285" rx="165" ry="50" class="ai"/><text x="1090" y="279" class="txt">Audit / remediation</text><text x="1090" y="307" class="sub">çifti öner</text>
+    <ellipse cx="1370" cy="285" rx="165" ry="50" class="ai"/><text x="1370" y="279" class="txt">İyileştirme</text><text x="1370" y="307" class="sub">ve diff öner</text>
+    <ellipse cx="1090" cy="435" rx="165" ry="50" class="ai"/><text x="1090" y="441" class="txt">Job sonucunu açıkla</text>
+    <ellipse cx="1370" cy="435" rx="165" ry="50" class="ai"/><text x="1370" y="429" class="txt">Sonraki adımları</text><text x="1370" y="457" class="sub">öner</text>
+    <ellipse cx="1090" cy="585" rx="165" ry="50" class="ai"/><text x="1090" y="579" class="txt">Dokümantasyon</text><text x="1090" y="607" class="sub">ve test taslağı</text>
+    <ellipse cx="1370" cy="585" rx="165" ry="50" class="ai"/><text x="1370" y="579" class="txt">Fleet eğilimlerini</text><text x="1370" y="607" class="sub">özetle</text>
+  </g>
+  <g>
+    <line x1="835" y1="285" x2="925" y2="155" class="dash"/><line x1="835" y1="285" x2="1205" y2="155" class="dash"/>
+    <line x1="835" y1="285" x2="925" y2="285" class="dash"/><line x1="835" y1="285" x2="1205" y2="285" class="dash"/>
+    <line x1="835" y1="675" x2="925" y2="435" class="dash"/><line x1="835" y1="675" x2="1205" y2="435" class="dash"/>
+    <line x1="835" y1="285" x2="925" y2="585" class="dash"/><line x1="835" y1="415" x2="1205" y2="585" class="dash"/>
+  </g>
+  <rect x="950" y="705" width="520" height="105" rx="18" fill="#ede9fe" stroke="#7c3aed" stroke-width="3"/>
+  <text x="1210" y="745" class="txt">AI source-of-truth değildir</text>
+  <text x="1210" y="778" class="sub">İnsan onayı ve deterministic execution korunur</text>
+</svg>
