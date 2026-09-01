@@ -204,13 +204,6 @@
         color: #64748b; font-size: 0.8rem; z-index: 3;
       }
       .footer .mini-brand { color: var(--brand); font-weight: 850; letter-spacing: 0.06em; }
-      .notes { display: none; }
-      body.notes-on .notes {
-        display: block; position: fixed; z-index: 100; left: 2vw; right: 2vw; bottom: 2vh;
-        max-height: 32vh; overflow: auto; padding: 1rem 1.25rem;
-        color: #e2e8f0; background: rgb(15 23 42 / 96%); border: 2px solid #5eead4;
-        border-radius: 1rem; box-shadow: var(--shadow); font-size: 1rem; line-height: 1.45;
-      }
       .controls {
         position: fixed; right: 1rem; top: 1rem; z-index: 150; display: flex; gap: 0.4rem; opacity: 0.17; transition: opacity 160ms ease;
       }
@@ -228,7 +221,7 @@
       @media print {
         html, body { overflow: visible; background: white; }
         .slide { position: relative; display: flex !important; width: 13.333in; height: 7.5in; break-after: page; }
-        .controls, .progress, .notes { display: none !important; }
+        .controls, .progress { display: none !important; }
       }
     </style>
   </head>
@@ -237,7 +230,6 @@
     <div class="controls" aria-label="Sunum kontrolleri">
       <button id="prev" type="button" title="Önceki slayt">←</button>
       <button id="next" type="button" title="Sonraki slayt">→</button>
-      <button id="notes" type="button" title="Konuşmacı notları (N)">N</button>
       <button id="full" type="button" title="Tam ekran (F)">⛶</button>
     </div>
 
@@ -254,7 +246,6 @@
           <p class="lede">Project, inventory, playbook, execution ve sonuç süreçlerini tek bir arayüzde birleştirir.</p>
         </div>
         <div class="cover-foot"><span class="cover-pill">İşlevsel trusted-operator MVP</span><span>2026</span></div>
-        <aside class="notes"><strong>Süre: 45 saniye.</strong> Ansible’ın kendisini yeniden yazmadığımızı söyle. Problem, Ansible çevresindeki seçim, çalıştırma ve sonuç sürecinin parçalı olması. AI’dan burada bahsetme; mevcut ürünü anlatacağımızı belirt.</aside>
       </section>
 
       <section class="slide" data-title="Ansible nedir?">
@@ -276,7 +267,6 @@
             <div class="hosts"><div class="host">web01</div><div class="host">web02</div><div class="host">db01</div><div class="host">...</div></div>
           </div>
         </div>
-        <aside class="notes"><strong>Süre: 60 saniye.</strong> “Agentless” kavramını vurgula. Ansible ping’in ICMP ping olmadığını sorulmadıkça burada açma. Controller’ın hedeflere SSH üzerinden bağlandığını ve modülleri çalıştırdığını anlat.</aside>
       </section>
 
       <section class="slide" data-title="Ansible kavramları">
@@ -300,7 +290,6 @@
         name: nginx
         state: present</pre>
         </div>
-        <aside class="notes"><strong>Süre: 75 saniye.</strong> Inventory = nerede, playbook = hangi senaryo, task = tek adım, module = nasıl yapılacak şeklinde akılda kalıcı anlat. YAML örneğinin yalnızca Nginx’in kurulu olmasını istediğini söyle.</aside>
       </section>
 
       <section class="slide" data-title="Desired state ve idempotency">
@@ -321,7 +310,6 @@
             <div class="card teal" style="margin-top:1.2rem;text-align:center"><h3>İdempotency kanıtı</h3><p style="font-size:2.4rem;font-weight:900;color:var(--good);margin:.5rem 0"><code>changed=0</code></p><p class="muted">Sistem zaten istenen durumdaysa yeniden değişiklik yok.</p></div>
           </div>
         </div>
-        <aside class="notes"><strong>Süre: 60 saniye.</strong> Ansible’ın “komut çalıştırma aracı” olmanın ötesindeki desired-state yaklaşımını anlat. Idempotency’nin Ansible tarafından otomatik garanti edilmediğini, playbookun doğru yazılması gerektiğini ekle.</aside>
       </section>
 
       <section class="slide" data-title="Problem ve çözüm">
@@ -352,7 +340,6 @@
           <div class="step">Project</div><div class="step">Inventory</div><div class="step">Playbook</div><div class="step">Plan + onay</div><div class="step">Job + worker</div><div class="step">Sonuç + geçmiş</div>
         </div>
         <blockquote class="quote" style="margin-top:1.15rem">DORAnsible, Ansible’ın yerine geçmez; Ansible execution’ını görünür ve izlenebilir bir ürün akışına dönüştürür.</blockquote>
-        <aside class="notes"><strong>Süre: 90 saniye.</strong> Sol tarafı “Ansible’ın kusurları” diye sunma; bunlar CLI çevresindeki operasyon yönetimi ihtiyaçlarıdır. Sağ tarafta DORAnsible’ın birebir karşılıklarını göster. Project/inventory/playbook bağlamı, açık plan/onay, kalıcı Job lifecycle ve ortak sonuç görünümünü vurgula.</aside>
       </section>
 
       <section class="slide" data-title="Mimari">
@@ -443,7 +430,6 @@
             <text x="1170" y="568" class="arch-small">SSH</text>
           </svg>
         </div>
-        <aside class="notes"><strong>Süre: 90 saniye.</strong> Frontend’in doğrudan SSH veya Ansible çalıştırmadığını anlat. FastAPI’nin Job oluşturduğunu, worker’ın ansible-runner çağırdığını ve hostlara SSH bağlantısının Ansible tarafından kurulduğunu söyle. Bu slaytta yalnız bugün çalışan mimariyi anlat; AI bölümüne henüz geçme.</aside>
       </section>
 
       <section class="slide" data-title="Canlı demo">
@@ -460,7 +446,6 @@
           <li><strong>Job geçmişi</strong><br /><span class="muted">Filtre ve sayfalama</span></li>
           <li><strong>İsteğe bağlı tekrar</strong><br /><span class="muted"><code>changed=0</code> örneği</span></li>
         </ol>
-        <aside class="notes"><strong>Süre: 4–6 dakika.</strong> Bu slaytta uygulamaya geç. Project ve inventory bağlamını, ping geçmişini, plan/mode/onay akışını ve Job sonucunu göster. Audit veya remediation playbooku kullanabilirsin; bunun standart Ansible pratiği olduğunu, ürünün yeniliği olarak sunmadığını açık tut. Zaman kalırsa ikinci çalıştırmada changed=0 örneğini göster. Yeni çalıştırma aksarsa önceden tamamlanmış Job kaydını aç.</aside>
       </section>
 
       <section class="slide" data-title="Neden AI?">
@@ -479,7 +464,6 @@
             </div>
           </div>
         </div>
-        <aside class="notes"><strong>Süre: 75 saniye.</strong> Geçiş cümlesini kullan: “Buraya kadar mevcut ürünü gördük; şimdi bu omurganın ileride açtığı AI imkânlarına bakalım.” AI’nın henüz uygulanmadığını açıkça söyle. Chatbot değil, ürün bağlamına entegre yardımcı katman hedeflediğimizi vurgula.</aside>
       </section>
 
       <section class="slide" data-title="AI kullanım alanları">
@@ -510,7 +494,6 @@
           </div>
         </div>
         <blockquote class="quote ai-quote" style="margin-top:1.1rem">AI source-of-truth değildir. Kaydedilmiş playbook, Job ve normalize runner sonucu gerçek kaynak olarak kalır.</blockquote>
-        <aside class="notes"><strong>Süre: 100 saniye.</strong> En güçlü üç örneği detaylandır: playbook açıklama, audit/remediation çifti ve sonuç analizi. AI’nın “kesin kök neden” uydurmayacağını; kanıta göre olası neden ve sonraki adım sunacağını belirt.</aside>
       </section>
 
       <section class="slide" data-title="AI use-case UML">
@@ -576,7 +559,6 @@
             <text x="1210" y="778" class="ai-sub">İnsan onayı ve deterministic execution korunur</text>
           </svg>
         </div>
-        <aside class="notes"><strong>Süre: 90 saniye.</strong> Sol tarafın bugün çalışan ürün olduğunu, sağ tarafın gelecek yetenekleri olduğunu söyle. AI kullanım alanlarının mevcut project, inventory, ping ve Job verisinden kontrollü bağlam aldığını; bağımsız ve sınırsız erişimi olmadığını anlat.</aside>
       </section>
 
       <section class="slide" data-title="Sonuç ve yol haritası">
@@ -592,7 +574,6 @@
           <blockquote class="quote"><strong>Bugünkü değer:</strong><br />Ansible operasyonlarını görünür, kalıcı ve izlenebilir hâle getirmek.</blockquote>
           <blockquote class="quote ai-quote"><strong>Gelecek değer:</strong><br />Doğal dil, playbook ve operasyon sonucu arasında insan denetimli AI katmanı kurmak.</blockquote>
         </div>
-        <aside class="notes"><strong>Süre: 60 saniye.</strong> Kapanışı iki cümleyle yap. Mevcut ürünün değerini küçültme; AI’yı gelecekteki farklılaştırıcı katman olarak konumlandır. Son cümle: “AI karar veren değil, profesyonel operatörü güçlendiren yardımcıdır.” Ardından soruları al.</aside>
       </section>
     </main>
 
@@ -620,14 +601,12 @@
       function move(delta) { index = Math.max(0, Math.min(slides.length - 1, index + delta)); render(); }
       document.getElementById('prev').addEventListener('click', () => move(-1));
       document.getElementById('next').addEventListener('click', () => move(1));
-      document.getElementById('notes').addEventListener('click', () => document.body.classList.toggle('notes-on'));
       document.getElementById('full').addEventListener('click', () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen());
       document.addEventListener('keydown', (event) => {
         if (['ArrowRight', 'PageDown', ' ', 'Enter'].includes(event.key)) { event.preventDefault(); move(1); }
         if (['ArrowLeft', 'PageUp', 'Backspace'].includes(event.key)) { event.preventDefault(); move(-1); }
         if (event.key === 'Home') { index = 0; render(); }
         if (event.key === 'End') { index = slides.length - 1; render(); }
-        if (event.key.toLowerCase() === 'n') document.body.classList.toggle('notes-on');
         if (event.key.toLowerCase() === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
       });
       window.addEventListener('hashchange', () => { const next = Number(location.hash.slice(1)) - 1; if (Number.isInteger(next) && next >= 0 && next < slides.length) { index = next; render(); } });

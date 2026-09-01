@@ -209,7 +209,7 @@ backend/             FastAPI, SQLAlchemy, worker ve Ansible servisleri
 frontend/            React, TypeScript, Vite kullanıcı arayüzü
 sample-projects/     SSH/UFW audit ve remediation örnekleri
 docs/                Kanonik kullanıcı/geliştirici/işletim belgeleri
-presentation/        Taşınabilir HTML sunumu ve konuşmacı notları
+presentation/        Taşınabilir HTML sunumu ve diyagram kaynakları
 scripts/             Test, kalite ve dependency audit komutları
 app-data/            Yerel runtime verisi; Git dışında
 ```
@@ -227,7 +227,7 @@ Kanonik giriş noktası: [docs/README.md](docs/README.md)
 - [Mimari](MIMARI.md)
 - [Güvenlik modeli](GUVENLIK.md)
 - [Örnek Ansible project'leri](sample-projects/README.md)
-- [HTML sunumu ve konuşmacı notları](presentation/README.md)
+- [HTML sunumu](presentation/README.md)
 
 Bu teslim repository'sinde yalnız ürün kaynakları, testler, örnek project'ler
 güncel işletim belgeleri ve teslim sunumu tutulur. Runtime verileri ile kişisel

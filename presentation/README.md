@@ -3,7 +3,6 @@
 ## Dosyalar
 
 - `sunum.html`: İnternet gerektirmeyen, 16:9 ve tek dosya olarak taşınabilir HTML sunumu.
-- `KONUSMACI_NOTLARI.md`: Slayt başına ayrıntılı konuşma metinleri.
 - `assets/architecture.svg`: UML bileşen diyagramının düzenlenebilir kaynak kopyası.
 - `assets/ai-use-cases.svg`: Mevcut ve planlanan AI use-case diyagramının düzenlenebilir kaynak kopyası.
 
@@ -29,16 +28,11 @@ gerektirmez. Diyagramlar HTML içine gömülüdür. Bu nedenle yalnız
 | `←`, `Backspace`, `PageUp` | Önceki slayt |
 | `Home` / `End` | İlk / son slayt |
 | `F` | Tam ekran |
-| `N` | Konuşmacı notlarını göster/gizle |
-
-Notlar aynı ekranda alt panel olarak açılır. Canlı sunum sırasında `N` ile
-kapalı tutun; prova sırasında kullanın.
 
 ## PDF alma
 
 Firefox’ta `Ctrl+P` ile yazdırma ekranını açıp “Dosyaya yazdır / PDF” seçeneğini
-kullanın. CSS her slaytı ayrı 16:9 sayfa olarak hazırlar. PDF’de konuşmacı
-notları yer almaz; notlar ayrı Markdown dosyasındadır.
+kullanın. CSS her slaytı ayrı 16:9 sayfa olarak hazırlar.
 
 ## Sunum öncesi kontrol
 
